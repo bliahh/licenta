@@ -178,9 +178,6 @@ def create_patches(data):
 
 
 
-
-
-
 class SlidingWindowPatchDataset(Dataset):
 
     def __init__(self, samples, transform=None):
@@ -196,51 +193,58 @@ class SlidingWindowPatchDataset(Dataset):
             pad_value=0,
         )
 
-        self.patches = []
+        self.patches_idx = []
 
         for sample_idx, sample in enumerate(samples):
 
             image = sample["image"]
 
-            for patch, coords in self.splitter(image):
+            for _, coords in self.splitter(image):
 
-                self.patches.append({
+                self.patches_idx.append({
                     "sample_index": sample_idx,
-                    "patch": patch,
                     "coords": coords,
-                    "label": self.assign_bin_label(sample,coords),
-                    "type_acq": sample["type_acq"],
-                    "spec_labels": self.assign_labels(sample,coords),
                 })
 
     def __len__(self):
-        return len(self.patches)
+        return len(self.patches_idx)
 
     def __getitem__(self, idx):
 
-        item = self.patches[idx]
+        item = self.patches_idx[idx]
 
-        patch = item["patch"]
+        sample_idx = item["sample_index"]
+        coords = item["coords"]
+
+        sample = self.samples[sample_idx]
+
+        image = sample["image"]
+
+        image_patch = image[
+            (slice(None),) + tuple(coords)
+        ]
 
         if self.transform is not None:
-            patch = self.transform({"image": patch})["image"]
+            image_patch = self.transform(
+                {"image": image_patch}
+            )["image"]
 
         return {
-            "image": patch,
-            "label": item["label"],
-            "sample_index": item["sample_index"],
-            "coords": item["coords"],
-            "type_acq": item["type_acq"],
-            "spec_labels": item["spec_labels"],
+            "image": image_patch,
+            "label": self.assign_bin_label(sample, coords),
+            "sample_index": sample_idx,
+            "coords": coords,
+            "type_acq": sample["type_acq"],
+            "spec_labels": self.assign_labels(sample, coords),
         }
 
-
-    def assign_bin_label(self, sample,coords):
-        #get the aneurysm mask
+    def assign_bin_label(self, sample, coords):
+        # get the aneurysm mask
         aneurysm_mask = sample["aneurysm_mask"].squeeze(0)
-        #extracts the corresponding mask patch
+        # extracts the corresponding mask patch
         mask_patch = aneurysm_mask[coords]
-        return int(torch.any(mask_patch>0))
+        return int(torch.any(mask_patch > 0))
+
 
     def assign_labels(self, sample, coords):
         aneurysm_mask = sample["aneurysm_mask"].squeeze(0)
@@ -253,4 +257,5 @@ class SlidingWindowPatchDataset(Dataset):
 
 if __name__ == "__main__":
  print(monai.__version__)
+
 

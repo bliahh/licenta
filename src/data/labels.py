@@ -23,6 +23,7 @@ def build_bin_samples(data_root):
     img_dir = os.path.join(data_root, "images")
     json_dir = os.path.join(data_root, "location_jsons")
     vessel_dir = os.path.join(data_root, "vessel_masks")
+    aneurysm_dir = os.path.join(data_root, "aneurysm_masks")
 
     labeled_samples = []
 
@@ -33,7 +34,7 @@ def build_bin_samples(data_root):
 
         json_path = os.path.join(json_dir, base + ".json")
         vessel_path = os.path.join(vessel_dir, base + ".nii.gz")
-
+        aneurysm_path = os.path.join(aneurysm_dir, base + ".nii.gz")
         if not os.path.exists(json_path):
             print(f"[ERROR] JSON missing for {img_path}")
             continue
@@ -44,6 +45,10 @@ def build_bin_samples(data_root):
                 f"at {vessel_path}"
             )
             continue
+        if not os.path.exists(aneurysm_dir):
+            print(f"[ERROR] Aneurysm mask missing for {img_path}")
+            print(f"at {aneurysm_dir}")
+            continue
 
         with open(json_path) as f:
             data = json.load(f)
@@ -53,6 +58,7 @@ def build_bin_samples(data_root):
         labeled_samples.append({
             "image": img_path,
             "vessel_mask": vessel_path,
+            "aneurysm_path": aneurysm_path,
             "label": has_aneurysm,
             "type_acq": "ct" if "_ct_" in img_path.lower() else "mr",
             "spec_labels": data["locations"]
