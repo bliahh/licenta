@@ -3,8 +3,8 @@ from src.config import DATASET_ROOT, LABELS_DIR, SPLIT_PATH, BATCH_PER_ARCH, NUM
 from src.data.labels import build_bin_samples, find_binary_distribution
 from src.data.split import build_train_val_test_split
 from src.data.datasets import preprocessing
-
 from functools import lru_cache
+from src.data.transforms import random_transform_dict, base_transform_dict, SlidingWindowPatchDataset
 
 # @lru_cache(maxsize=None)
 # def get_datasets():
@@ -54,3 +54,17 @@ def build_loaders(name,batch_size = None):
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=(NUM_WORKERS > 0), prefetch_factor=(2 if NUM_WORKERS > 0 else None))
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,num_workers=NUM_WORKERS, pin_memory=True,persistent_workers=(NUM_WORKERS > 0),prefetch_factor=(2 if NUM_WORKERS > 0 else None))
     return train_loader, val_loader, test_loader
+
+
+def Sliding_window_loader(sample,batch_size,is_training = True):
+    base_transform = base_transform_dict()
+    sample = base_transform(sample)
+
+    if is_training:
+        patches = SlidingWindowPatchDataset(sample,random_transform_dict())
+    else:
+        patches = SlidingWindowPatchDataset(sample)
+    loader = DataLoader( patches, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=(NUM_WORKERS > 0), prefetch_factor=(2 if NUM_WORKERS > 0 else None))
+    return loader
+
+
