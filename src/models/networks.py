@@ -119,5 +119,41 @@ MODELS = {
 }
 
 
+class ResnetArchitecture(nn.Module):
+
+    def __init__(self, dropout=0.0):
+        super().__init__()
+
+        self.model = resnet18(
+            spatial_dims=3,
+            n_input_channels=1,
+            num_classes=1,
+            pretrained=False,
+        )
+
+        in_features = self.model.fc.in_features
+
+        self.model.fc = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(in_features, 1)
+        )
+
+        self.embedding = None
+
+        self.model.fc.register_forward_pre_hook(
+            self._save_embedding
+        )
+
+    def _save_embedding(self, module, inputs):
+        self.embedding = inputs[0]
+
+    def forward(self, x, return_embedding=False):
+
+        logits = self.model(x)
+
+        if return_embedding:
+            return logits, self.embedding
+
+        return logits
 def build_model(model, dropout=0.0):
     return MODELS[model](dropout)
