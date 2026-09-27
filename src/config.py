@@ -78,3 +78,9 @@ OUTPUT_SAVE_DIR = os.path.join(PROJECT_DIR,"public_out","sliding_with_batch_norm
 BEST_MODEL_PATH = os.path.join(OUTPUT_SAVE_DIR,"best_model.pth")
 EVAL_DIR = os.path.join(OUTPUT_SAVE_DIR,"evaluation")
 PREPROCESSED_DIR = os.path.join(PROJECT_DIR,"dataset","preprocessed_dataset")
+
+
+POSITIVE = 1
+WEAK_POSITIVE = -1
+NEG_BIF = 2
+NEGATIVE = 0

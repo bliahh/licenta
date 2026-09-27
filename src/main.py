@@ -200,8 +200,10 @@ def main():
 
 
 if __name__ == "__main__":
-    for ckpt in ("best_model.pth", "best_model_patient_auc.pth"):
-        evaluate_sliding_model("run_20260926_171449", checkpoint=ckpt, threshold_method="fbeta", beta=1)
-        evaluate_sliding_model("run_20260926_171449", checkpoint=ckpt, threshold_method="youden")
-
-
+    # labeled_sample = build_train_val_test_split(labels_dir=LABELS_DIR, val_ratio=0.16, test_ratio=0.20, seed=42)
+    # preprocess_all_splits(labeled_sample)
+    # for ckpt in ("best_model.pth", "best_model_patient_auc.pth"):
+    #     evaluate_sliding_model("run_20260927_123951", checkpoint=ckpt, threshold_method="fbeta", beta=1)
+    #     evaluate_sliding_model("run_20260927_123951", checkpoint=ckpt, threshold_method="youden")
+    # # sliding_window_pipeline()
+    sliding_window_pipeline()

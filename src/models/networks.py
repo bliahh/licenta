@@ -118,6 +118,15 @@ MODELS = {
     'efficientnet-b3': build_model_efficientnet_b3,
 }
 
+def bn_to_gn(module, num_groups=8):
+    """Recursively replaces every BatchNorm3d with GroupNorm."""
+    for name, child in module.named_children():
+        if isinstance(child, nn.BatchNorm3d):
+            setattr(module, name, nn.GroupNorm(num_groups, child.num_features))
+        else:
+            bn_to_gn(child, num_groups)
+    return module
+
 
 class ResnetArchitecture(nn.Module):
     def __init__(self, dropout=0.0):

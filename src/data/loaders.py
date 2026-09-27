@@ -1,6 +1,12 @@
+import numpy as np
 import torch
+from monai.apps.detection.utils.hard_negative_sampler import HardNegativeSampler
 from monai.data import DataLoader
+from monai.transforms.utils import ndimage
+from skimage.morphology import skeletonize
 from torch.utils.data import default_collate, Sampler
+
+from src import config
 from src.config import DATASET_ROOT, LABELS_DIR, SPLIT_PATH, BATCH_PER_ARCH, NUM_WORKERS
 from src.data.labels import build_bin_samples, find_binary_distribution
 from src.data.split import build_train_val_test_split
@@ -76,11 +82,11 @@ def Sliding_window_loader(samples, batch_size, split, is_training=True):
     """
     transform = random_transform_dict() if is_training else None
 
-    patches = SlidingWindowPatchDataset(samples=samples, split=split, transform=transform, overlap=0.25)
+    patches = SlidingWindowPatchDataset(samples=samples, split=split, transform=transform, overlap=0.25,min_bif=10,th_fraction=0.5)
 
     if is_training:
         labels = patches.patch_labels()
-        sampler = PosNegSampler(labels, neg_ratio=3)
+        sampler = HardPosNegSampler(labels=labels, neg_ratio=3,hard_ratio=0.5)
         print(f"[{split}] pos={len(sampler.pos)} neg={len(sampler.neg)} -> {len(sampler)} patches/epochs")
     else:
         sampler = None
@@ -148,4 +154,39 @@ class PosNegSampler(Sampler):
         # patches per epoch
         return len(self.pos) + self.n_neg
 
+def find_bifurcation(vessel_mask):
+    skeleton_mask = skeletonize(vessel_mask > 0).astype(bool)
+    kernel = np.ones((3, 3, 3), np.int16)
+    neighbours = ndimage.convolve(skeleton_mask.astype(np.int16), kernel, mode="constant") - 1
+    branch = skeleton_mask & (neighbours >= 3)
+    labels, num_features = ndimage.label(branch, structure=np.ones((3, 3, 3)))
+    if num_features == 0:
+        return np.zeros((0, 3), dtype=np.int32)
+
+    centers = ndimage.center_of_mass(branch, labels, range(1, num_features + 1))
+    return np.round(np.asarray(centers)).astype(np.int32)
+
+
+class HardPosNegSampler(Sampler):
+    def __init__(self, labels, neg_ratio=3,hard_ratio=0.5):
+        self.hard_ratio = hard_ratio
+
+        self.hard_neg = [i for i, l in enumerate(labels) if l==config.NEG_BIF]
+        self.neg = [i for i, l in enumerate(labels) if l == config.NEGATIVE]
+        self.pos = [i for i, l in enumerate(labels) if l ==config.POSITIVE ]
+
+        n_total_neg = min(len(self.neg) + len(self.hard_neg), int(neg_ratio * len(self.pos)))
+
+        self.n_h_neg = min(len(self.hard_neg), int(round(n_total_neg * hard_ratio)))
+        self.n_neg = min(len(self.neg), n_total_neg - self.n_h_neg)
+
+    def __iter__(self):
+        h_neg = torch.randperm(len(self.hard_neg))[:self.n_h_neg].tolist()
+        neg = torch.randperm(len(self.neg))[:self.n_neg].tolist()
+        idx = self.pos + [self.hard_neg[i] for i in h_neg] + [self.neg[i] for i in neg]
+
+        return iter([idx[i] for i in torch.randperm(len(idx)).tolist()])
+
+    def __len__(self):
+        return len(self.pos) + self.n_h_neg + self.n_neg
 
