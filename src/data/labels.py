@@ -2,6 +2,7 @@ import glob
 import os
 import json
 from src import config
+from src.config import DATASET_ROOT
 from src.utils.helpers import save_labeled_samples
 
 
@@ -23,7 +24,7 @@ def build_bin_samples(data_root):
     img_dir = os.path.join(data_root, "images")
     json_dir = os.path.join(data_root, "location_jsons")
     vessel_dir = os.path.join(data_root, "vessel_masks")
-    aneurysm_dir = os.path.join(data_root, "aneurysm_masks")
+    aneurysm_dir = os.path.join(data_root, "location_masks")
 
     labeled_samples = []
 
@@ -58,7 +59,7 @@ def build_bin_samples(data_root):
         labeled_samples.append({
             "image": img_path,
             "vessel_mask": vessel_path,
-            "aneurysm_path": aneurysm_path,
+            "aneurysm_mask": aneurysm_path,
             "label": has_aneurysm,
             "type_acq": "ct" if "_ct_" in img_path.lower() else "mr",
             "spec_labels": data["locations"]
@@ -121,4 +122,4 @@ def print_distribution():
 
 if __name__ == "__main__":
     print_distribution()
-
+    labeled_samples = build_bin_samples(data_root=DATASET_ROOT)

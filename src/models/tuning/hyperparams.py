@@ -3,7 +3,7 @@ import os
 import numpy as np
 import optuna
 import torch
-from sklearn.metrics import fbeta_score
+from sklearn.metrics import fbeta_score, roc_curve
 from src.config import N_TRIALS, DEVICE, ARCHITECTURES, OUTPUT_DIR
 from src.models.networks import build_model
 from src.models.tuning.optuna_search import objective
@@ -120,4 +120,25 @@ def compute_all_thresh(loss_name, results, beta):
         json.dump(tuned, f, indent=2)
     return tuned
 
+
+def find_th(scores, labels, beta=1):
+
+    scores = np.asarray(scores)
+    labels = np.asarray(labels)
+    best_thresh, best_metric = 0.5, -1.0
+    for threshold in np.unique(scores):
+        preds = (scores >= threshold).astype(int)
+        score = fbeta_score(labels, preds, beta=beta, zero_division=0)
+        if score > best_metric:
+            best_metric = score
+            best_thresh = float(threshold)
+    print(f"[THRESHOLD] best={best_thresh:.4f} | F{beta}={best_metric:.3f}")
+    return best_thresh, best_metric
+
+
+def youden_th(scores, labels):
+    """Threshold that maximizes sensitivity + specificity - 1 (Youden index)."""
+    fpr, tpr, thr = roc_curve(np.asarray(labels), np.asarray(scores))
+    i = int(np.argmax(tpr - fpr))
+    return float(min(thr[i], 1.0)), float(tpr[i] - fpr[i])
 

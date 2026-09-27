@@ -120,7 +120,6 @@ MODELS = {
 
 
 class ResnetArchitecture(nn.Module):
-
     def __init__(self, dropout=0.0):
         super().__init__()
 
@@ -129,6 +128,8 @@ class ResnetArchitecture(nn.Module):
             n_input_channels=1,
             num_classes=1,
             pretrained=False,
+            norm=("group", {"num_groups": 8}),
+            conv1_t_stride=2,
         )
 
         in_features = self.model.fc.in_features
@@ -148,7 +149,6 @@ class ResnetArchitecture(nn.Module):
         self.embedding = inputs[0]
 
     def forward(self, x, return_embedding=False):
-
         logits = self.model(x)
 
         if return_embedding:

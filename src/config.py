@@ -67,8 +67,14 @@ BETA = 2
 
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "output", "outputs_vesselmask")
 SAVE_DIR = os.path.join(OUTPUT_DIR, "models")
-EVAL_DIR = os.path.join(OUTPUT_DIR, "evaluation")
 TUNED_EVAL_DIR = os.path.join(OUTPUT_DIR, "evaluation_tuned")
 
 RESULTS_PATH = os.path.join(OUTPUT_DIR, "comparison_results.json")
 TUNED_RESULTS_PATH = os.path.join(OUTPUT_DIR, "comparison_results_tuned.json")
+
+OUTPUT_SAVE_PATH = os.path.join(PROJECT_DIR,"public_out", "sliding")
+
+OUTPUT_SAVE_DIR = os.path.join(PROJECT_DIR,"public_out","sliding_with_batch_norm8")
+BEST_MODEL_PATH = os.path.join(OUTPUT_SAVE_DIR,"best_model.pth")
+EVAL_DIR = os.path.join(OUTPUT_SAVE_DIR,"evaluation")
+PREPROCESSED_DIR = os.path.join(PROJECT_DIR,"dataset","preprocessed_dataset")

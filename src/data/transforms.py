@@ -1,11 +1,11 @@
+import os
 import monai
 import monai.transforms as T
 import torch
 from monai.data import GridPatchDataset, PatchIter, SlidingPatchWSIDataset
 from monai.inferers import SlidingWindowSplitter
-from monai.transforms import GridPatch
 from torch.utils.data import Dataset
-from src.config import SIZE
+from src.config import SIZE, PREPROCESSED_DIR
 
 def base_transform_dict():
     """
@@ -48,7 +48,7 @@ def base_transform_dict():
         # Nearest-neighbor interpolation is used for the vessel mask
         # because it preserves the discrete mask labels and avoids
         # creating intermediate values.
-        T.Spacingd(keys=["image", "vessel_mask","aneurysm_mask"],pixdim=(0.5, 0.5, 0.5),mode=("bilinear", "nearest")),
+        T.Spacingd(keys=["image", "vessel_mask","aneurysm_mask"],pixdim=(0.5, 0.5, 0.5),mode=("bilinear", "nearest", "nearest")),
 
         # Convert the vessel mask into a binary mask.
         # Every voxel with a value greater than 0 becomes 1,
@@ -172,89 +172,138 @@ def create_patches(data):
         offset= 0,
         pad_mode="constant",
         pad_value= 0,
-        device= "cuda",
     )
     return splitter(data)
-
-
-
 class SlidingWindowPatchDataset(Dataset):
+    """
+    Dataset of 3D sliding-window patches extracted from preprocessed patients.
 
-    def __init__(self, samples, transform=None):
+    At initialization, it builds an index of all patches (patient, patch position, label)
+    using only the aneurysm masks. Images are opened with memory mapping, so only the
+    requested patch is read from disk in __getitem__.
 
+    :param samples: list of patient samples of the split
+    :param split: "train", "val" or "test"; selects the preprocessed subdirectory
+    :param transform: optional augmentation applied to each image patch
+    :param patch_size: patch size in voxels
+    :param overlap: fraction of overlap between neighbor patches
+    :param preprocessed_dir: root directory of the preprocessed data
+    """
+
+    def __init__(self, samples, split, transform=None, patch_size=(96, 96, 96), overlap=0.5, preprocessed_dir=PREPROCESSED_DIR):
         self.samples = samples
+        self.split = split
         self.transform = transform
+        self.patch_size = patch_size
+        self.overlap = overlap
+        self.preprocessed_dir = os.path.join(preprocessed_dir, split)
+        self.patch_index = []
+        self._patients = {}
+        self._prepare_patch_index()
 
-        self.splitter = SlidingWindowSplitter(
-            patch_size=(96, 96, 96),
-            overlap=0.5,
-            offset=0,
-            pad_mode="constant",
-            pad_value=0,
-        )
+    def patch_labels(self):
+        """Returns the label of every patch (1 = contains aneurysm, 0 = not), in dataset order."""
+        return [label for _, _, label in self.patch_index]
 
-        self.patches_idx = []
+    def _patient_dir(self, sample_idx):
+        """Returns the preprocessed directory of a patient."""
+        return os.path.join(self.preprocessed_dir, f"patient_{sample_idx:04d}")
 
-        for sample_idx, sample in enumerate(samples):
+    def _load(self, path, mmap=False):
+        """Loads a .pt file; with mmap=True the data is read from disk only when accessed."""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Missing preprocessed file:\n{path}\nRun preprocessing for split '{self.split}' first.")
+        return torch.load(path, map_location="cpu", weights_only=False, mmap=mmap)
 
-            image = sample["image"]
+    def _prepare_patch_index(self):
+        """Builds the list of all patches as (patient index, patch index, label), using only the aneurysm masks."""
+        # print("=" * 70)
+        # print(f"LOADING PREPROCESSED DATASET: {self.split.upper()}")
+        # print("=" * 70)
 
-            for _, coords in self.splitter(image):
+        for sample_idx in range(len(self.samples)):
+            patient_dir = self._patient_dir(sample_idx)
+            metadata = self._load(os.path.join(patient_dir, "metadata.pt"))
+            mask = self._load(os.path.join(patient_dir, "aneurysm_mask.pt"), mmap=True)
+            spatial_shape = tuple(metadata["spatial_shape"])
+            counts, _ = self._grid(spatial_shape)
+            n_patches = counts[0] * counts[1] * counts[2]
+            n_pos = 0
 
-                self.patches_idx.append({
-                    "sample_index": sample_idx,
-                    "coords": coords,
-                })
+            for patch_idx in range(n_patches):
+                coords = (slice(None),) + self._get_patch_coords(spatial_shape, patch_idx)
+                label = int(torch.any(mask[coords] > 0))
+                self.patch_index.append((sample_idx, patch_idx, label))
+                n_pos += label
+
+            #print(f"[LOAD] patient={sample_idx:04d} / shape={spatial_shape} / patches={n_patches} / pos={n_pos}")
+
+        n_pos_total = sum(self.patch_labels())
+        # print("=" * 70)
+        # print(f"TOTAL PATIENTS: {len(self.samples)}")
+        # print(f"TOTAL PATCHES: {len(self.patch_index)} / POS: {n_pos_total} / NEG: {len(self.patch_index) - n_pos_total}")
+        # print("=" * 70)
+
+    def _grid(self, spatial_shape):
+        """Returns the number of patches and the stride along each axis for a volume of the given shape."""
+        counts, strides = [], []
+        for size, patch in zip(spatial_shape, self.patch_size):
+            if size <= patch:
+                counts.append(1)
+                strides.append(0)
+            else:
+                stride = int(patch * (1 - self.overlap))
+                counts.append((size - patch + stride - 1) // stride + 1)
+                strides.append(stride)
+        return counts, strides
 
     def __len__(self):
-        return len(self.patches_idx)
+        """Returns the total number of patches."""
+        return len(self.patch_index)
+
+    def _start_position(self, index, size, patch, stride):
+        """Returns the start of a patch along one axis; the last patch is aligned to the volume border."""
+        if size <= patch:
+            return 0
+        return min(index * stride, size - patch)
+
+    def _get_patch_coords(self, spatial_shape, patch_idx):
+        """Converts a flat patch index into the three spatial slices of that patch."""
+        counts, strides = self._grid(spatial_shape)
+        nx, ny, nz = counts
+        iz = patch_idx % nz
+        iy = (patch_idx // nz) % ny
+        ix = patch_idx // (ny * nz)
+        x = self._start_position(ix, spatial_shape[0], self.patch_size[0], strides[0])
+        y = self._start_position(iy, spatial_shape[1], self.patch_size[1], strides[1])
+        z = self._start_position(iz, spatial_shape[2], self.patch_size[2], strides[2])
+        return (slice(x, x + self.patch_size[0]), slice(y, y + self.patch_size[1]), slice(z, z + self.patch_size[2]))
+
+    def _load_patient(self, sample_idx):
+        """Opens (once) and caches the memory-mapped image, mask and metadata of a patient."""
+        if sample_idx not in self._patients:
+            patient_dir = self._patient_dir(sample_idx)
+            image = self._load(os.path.join(patient_dir, "image.pt"), mmap=True)
+            aneurysm_mask = self._load(os.path.join(patient_dir, "aneurysm_mask.pt"), mmap=True)
+            metadata = self._load(os.path.join(patient_dir, "metadata.pt"))
+            self._patients[sample_idx] = (image, aneurysm_mask, metadata)
+        return self._patients[sample_idx]
 
     def __getitem__(self, idx):
-
-        item = self.patches_idx[idx]
-
-        sample_idx = item["sample_index"]
-        coords = item["coords"]
-
-        sample = self.samples[sample_idx]
-
-        image = sample["image"]
-
-        image_patch = image[
-            (slice(None),) + tuple(coords)
-        ]
+        """Extracts one patch, applies the optional augmentation and returns it with its labels and metadata."""
+        sample_idx, patch_idx, patch_label = self.patch_index[idx]
+        image, aneurysm_mask, metadata = self._load_patient(sample_idx)
+        spatial_shape = tuple(image.shape[1:])
+        coords = (slice(None),) + self._get_patch_coords(spatial_shape, patch_idx)
+        image_patch = image[coords].clone().float()
+        aneurysm_patch = aneurysm_mask[coords]
+        labels = torch.unique(aneurysm_patch)
+        labels = labels[labels != 0].tolist()
 
         if self.transform is not None:
-            image_patch = self.transform(
-                {"image": image_patch}
-            )["image"]
+            image_patch = self.transform({"image": image_patch})["image"]
 
-        return {
-            "image": image_patch,
-            "label": self.assign_bin_label(sample, coords),
-            "sample_index": sample_idx,
-            "coords": coords,
-            "type_acq": sample["type_acq"],
-            "spec_labels": self.assign_labels(sample, coords),
-        }
-
-    def assign_bin_label(self, sample, coords):
-        # get the aneurysm mask
-        aneurysm_mask = sample["aneurysm_mask"].squeeze(0)
-        # extracts the corresponding mask patch
-        mask_patch = aneurysm_mask[coords]
-        return int(torch.any(mask_patch > 0))
-
-
-    def assign_labels(self, sample, coords):
-        aneurysm_mask = sample["aneurysm_mask"].squeeze(0)
-        mask_patch = aneurysm_mask[coords]
-
-        labels = torch.unique(mask_patch)
-        labels = labels[labels != 0]
-
-        return labels.tolist()
-
+        return {"image": image_patch.float(), "patient_label": int(metadata["patient_label"]), "label": patch_label, "sample_index": sample_idx, "type_acq": metadata["type_acq"], "spec_labels": labels, "index": idx}
 if __name__ == "__main__":
  print(monai.__version__)
 

@@ -7,7 +7,7 @@ from src.data.loaders import build_loaders
 from src.models.loss import get_loss_params, build_loss
 from src.models.networks import build_model
 from src.evaluation.plots import save_confusion_matrix, plot_hyst
-from src.models.run import run
+from src.models.run import run, run_sliding
 from src.models.tuning.hyperparams import find_threshold
 from src.utils.helpers import get_eval_dir, get_model_dir, get_results_path
 
@@ -26,7 +26,8 @@ def evaluate(name, loss_name, save_path, params, test_loader, threshold=0.5, eva
 
     print(f"[INFO] Evaluating {name}/{loss_name} threshold={threshold:.3f}")
 
-    test_metrics = run(model, test_loader, criterion, optimizer=None, device=DEVICE, threshold=threshold, is_train=False, desc=f"TEST {name} [{loss_name}]")
+    test_metrics = run_sliding(model, test_loader, criterion, optimizer=None, device=DEVICE, threshold=threshold, is_train=False, desc=f"TEST {name} [{loss_name}]")
+
 
     print(f"\n[RESULTS {name}/{loss_name}]")
     for metric, value in test_metrics.items():
