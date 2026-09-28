@@ -2,6 +2,8 @@ import os
 import json
 import random
 
+from src.config import LABELS_DIR
+
 
 def split_list(lst,val_ratio,test_ratio):
     """
@@ -67,26 +69,27 @@ def build_train_val_test_split(labels_dir, val_ratio=0.16, test_ratio=0.20, seed
     print(f"[SUCCESS] Split saved {split_path}")
     return split_data
 
-
 def extract_split(split_file):
-    """
-    retreive the .json file that contains the train/test/val dataset
-    :param split_file: file that contains the dataset splitted
-    :return: for each set, returns image,mask,label of each samples
-    """
     with open(split_file, "r") as f:
         data = json.load(f)
 
     tr_imgs = [s["image"] for s in data["train"]]
-    tr_masks = [s["vessel_mask"] for s in data["train"]]
+    tr_vessel_masks = [s["vessel_mask"] for s in data["train"]]
+    tr_aneurysm_masks = [s["aneurysm_mask"] for s in data["train"]]
     tr_lbls = [s["label"] for s in data["train"]]
 
     va_imgs = [s["image"] for s in data["val"]]
-    va_masks = [s["vessel_mask"] for s in data["val"]]
+    va_vessel_masks = [s["vessel_mask"] for s in data["val"]]
+    va_aneurysm_masks = [s["aneurysm_mask"] for s in data["val"]]
     va_lbls = [s["label"] for s in data["val"]]
 
     te_imgs = [s["image"] for s in data["test"]]
-    te_masks = [s["vessel_mask"] for s in data["test"]]
+    te_vessel_masks = [s["vessel_mask"] for s in data["test"]]
+    te_aneurysm_masks = [s["aneurysm_mask"] for s in data["test"]]
     te_lbls = [s["label"] for s in data["test"]]
 
-    return tr_imgs, tr_masks, tr_lbls, va_imgs, va_masks, va_lbls, te_imgs, te_masks, te_lbls
+    return  tr_imgs, tr_vessel_masks, tr_aneurysm_masks, tr_lbls, va_imgs, va_vessel_masks, va_aneurysm_masks, va_lbls, te_imgs, te_vessel_masks, te_aneurysm_masks, te_lbls
+
+
+if __name__ == "__main__":
+    build_train_val_test_split(labels_dir=LABELS_DIR,val_ratio=0.16,test_ratio=0.20,seed=42)

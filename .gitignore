@@ -26,4 +26,5 @@ optuna_*.db
 *.log
 *.tmp
 *.temp
+*.zip
 .ipynb_checkpoints/

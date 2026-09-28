@@ -1,0 +1,2 @@
+fara sampler
+pw = 6.8
