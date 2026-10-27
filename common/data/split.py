@@ -1,0 +1,99 @@
+import os
+import json
+import random
+
+from common.paths import LABELS_DIR, SPLIT
+
+
+def split_list(lst,val_ratio,test_ratio):
+    """
+    split the entire dataset into train,test and val set
+    :param lst: list of the positive or negative samples
+    :param val_ratio: percentage of validation samples
+    :param test_ratio: percentage of test samples
+    :return: train,test,val split for positive and negative samples
+    """
+    n = len(lst)
+    n_val = int(n * val_ratio)
+    n_test = int(n * test_ratio)
+    val = lst[:n_val]
+    test = lst[n_val:n_val + n_test]
+    train = lst[n_val + n_test:]
+    return train, val, test
+
+
+def build_train_val_test_split(labels_dir=LABELS_DIR, val_ratio=SPLIT["val_ratio"], test_ratio=SPLIT["test_ratio"], seed=SPLIT["seed"]):
+    """
+    build train, test, and val split for binary labels and saves it in .json format
+    if the split already exists on disk, it is loaded instead
+    :param labels_dir: directory w labels
+    :param val_ratio: percentage of validation samples
+    :param test_ratio: percentage of test samples
+    :param seed: 42
+    :return: split_data: dictionary k = type_samples, v = list for each set
+    """
+    split_path = os.path.join(labels_dir, "dataset_split.json")
+    labels_path = os.path.join(labels_dir, "binary_labels.json")
+
+    if os.path.exists(split_path):
+        with open(split_path, "r") as f:
+            data = json.load(f)
+            return data
+
+    print(f"[INFO] Gen. NEW split {labels_path}...")
+    with open(labels_path, "r") as f:
+        samples = json.load(f)
+
+    pos_samples = [s for s in samples if s["label"] == 1]
+    neg_samples = [s for s in samples if s["label"] == 0]
+
+    random.seed(seed)
+    random.shuffle(pos_samples)
+    random.shuffle(neg_samples)
+
+    pos_train, pos_val, pos_test = split_list(pos_samples,val_ratio,test_ratio)
+    neg_train, neg_val, neg_test = split_list(neg_samples,val_ratio,test_ratio)
+
+    train = pos_train + neg_train
+    val = pos_val + neg_val
+    test = pos_test + neg_test
+
+    random.shuffle(train)
+    random.shuffle(val)
+    random.shuffle(test)
+
+    split_data = {"train": train, "val": val, "test": test}
+
+    with open(split_path, "w") as f:
+        json.dump(split_data, f, indent=2)
+
+    print(f"[SUCCESS] Split saved {split_path}")
+    return split_data
+
+
+def print_split_sizes(labeled_sample):
+    print(f"Train: {len(labeled_sample['train'])}")
+    print(f"Val: {len(labeled_sample['val'])}")
+    print(f"Test: {len(labeled_sample['test'])}")
+
+
+def extract_split(split_file):
+    with open(split_file, "r") as f:
+        data = json.load(f)
+
+    tr_imgs = [s["image"] for s in data["train"]]
+    tr_vessel_masks = [s["vessel_mask"] for s in data["train"]]
+    tr_aneurysm_masks = [s["aneurysm_mask"] for s in data["train"]]
+    tr_lbls = [s["label"] for s in data["train"]]
+
+    va_imgs = [s["image"] for s in data["val"]]
+    va_vessel_masks = [s["vessel_mask"] for s in data["val"]]
+    va_aneurysm_masks = [s["aneurysm_mask"] for s in data["val"]]
+    va_lbls = [s["label"] for s in data["val"]]
+
+    te_imgs = [s["image"] for s in data["test"]]
+    te_vessel_masks = [s["vessel_mask"] for s in data["test"]]
+    te_aneurysm_masks = [s["aneurysm_mask"] for s in data["test"]]
+    te_lbls = [s["label"] for s in data["test"]]
+
+    return  tr_imgs, tr_vessel_masks, tr_aneurysm_masks, tr_lbls, va_imgs, va_vessel_masks, va_aneurysm_masks, va_lbls, te_imgs, te_vessel_masks, te_aneurysm_masks, te_lbls
