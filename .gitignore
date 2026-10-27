@@ -28,3 +28,11 @@ optuna_*.db
 *.temp
 *.zip
 .ipynb_checkpoints/
+
+# outputs of every project (runs, checkpoints, tables, csv results), at any depth
+out/
+**/out/
+public_out/
+tables/
+runs/
+archive/
