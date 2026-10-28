@@ -3,7 +3,9 @@ import glob
 
 from common.data.labels import build_bin_samples, find_binary_distribution, print_distribution
 from common.data.split import build_train_val_test_split
+from common.paths import LABELS_DIR, DATASET_ROOT
 from dataset_analysis.analysis.general import build_patient_table, dataset_report, group_counts, aneurysm_sizes
+from dataset_analysis.meta_analysis.TopAneu.metadata_analysis import build_dataset_table, attach_descrip_info
 from dataset_analysis.analysis.patch import patch_distribution
 from dataset_analysis.config import OUT_DIR, ANEURYSM_MASK_DIR, MIN_ANEURYSM_MM3
 
@@ -46,4 +48,19 @@ def patches():
 
 
 if __name__ == "__main__":
-    report()
+    #report()
+    # extract_headers()
+
+    split = build_train_val_test_split(labels_dir=LABELS_DIR, val_ratio=0.16, test_ratio=0.20, seed=42)
+    samples = split["train"] + split["val"] + split["test"]
+
+    table = build_dataset_table(samples, include_center=True,include_intensity=True)
+    print(table.shape)
+    table.to_csv("metadata_topaneu.csv", index=False)
+
+    files = sorted(f for f in os.listdir(os.path.join(DATASET_ROOT, "images")) if f.endswith((".nii", ".nii.gz")))
+    descrip_table = attach_descrip_info(files)
+    descrip_table.to_csv("descrip_topaneu.csv", index=False)
+
+    not_empty = descrip_table[descrip_table["descrip"] != ""]
+    print(not_empty.groupby("center").head(3).to_string())

@@ -4,8 +4,9 @@ import pandas as pd
 import SimpleITK as sitk
 from scipy import ndimage
 from sklearn.metrics import roc_auc_score
+import nibabel as nib
 
-from common.paths import PATIENTS_CSV
+from common.paths import PATIENTS_CSV, DATASET_ROOT
 from common.data.patient_info import read_spacing, center_of, patient_groups
 from dataset_analysis.config import OUT_DIR
 

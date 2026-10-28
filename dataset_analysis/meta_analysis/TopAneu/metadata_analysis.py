@@ -8,7 +8,7 @@ from common.paths import DATASET_ROOT
 
 
 SP = ["spacing_x", "spacing_y", "spacing_z"]
-
+DUPLICATES = ["topaneu_center4_ct_008_2_0000.nii.gz"]
 
 def extract_headers(data_root=DATASET_ROOT):
     img_dir = os.path.join(data_root, "images")
@@ -182,6 +182,12 @@ def build_dataset_table(samples, data_root=DATASET_ROOT, include_center=False, i
 
     img_dir = os.path.join(data_root, "images")
     files = sorted(f for f in os.listdir(img_dir) if f.endswith((".nii", ".nii.gz")))
+
+
+    img_dir = os.path.join(data_root, "images")
+    files = sorted(f for f in os.listdir(img_dir) if f.endswith((".nii", ".nii.gz")))
+    files = [f for f in files if f not in DUPLICATES]
+
 
     # grupul 2: geometrie
     table = attach_dim_info(files, data_root).merge(attach_spacing_info(files, data_root), on="file")
