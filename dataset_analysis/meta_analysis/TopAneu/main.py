@@ -5,6 +5,7 @@ from sklearn.metrics import roc_auc_score
 
 from common.data.labels import build_bin_samples
 from common.paths import DATASET_ROOT
+from dataset_analysis.meta_analysis.TopAneu.XAI import shap_explanation
 from dataset_analysis.meta_analysis.TopAneu.metadata_analysis import build_dataset_table, attach_descrip_info
 from dataset_analysis.meta_analysis.TopAneu.model import meta_build_train_test_split, train_xgboost, test_classifier, map_center_labels, test_classifier_multiclass
 
@@ -64,7 +65,7 @@ def run_meta_analysis_without_center(table):
     return results
 
 
-def run_xgboost(table, name, include_center=False, seed=42, drop_columns=(), multiclass=False):
+def run_xgboost(table, name, include_center=False, seed=42, drop_columns=(), multiclass=False, run_shap = True):
     table = table.drop(columns=[c for c in drop_columns if c in table])
     x_train, y_train, x_test, y_test = meta_build_train_test_split(table, include_center, seed)
     model, best_params = train_xgboost(x_train, y_train, multiclass)
@@ -74,8 +75,19 @@ def run_xgboost(table, name, include_center=False, seed=42, drop_columns=(), mul
     else:
         p = test_classifier(model, x_test, y_test)
         auc, balanced_acc = roc_auc_score(y_test, p), None
-    return {"experiment": name, "seed": seed, "n": len(table), "n_test": len(y_test),
-            "auc_test": auc, "balanced_acc": balanced_acc, "model": model}
+
+
+    if run_shap:
+        x = pd.concat([x_train, x_test])
+        out_dir = os.path.join(OUT_DIR, name)
+        os.makedirs(out_dir, exist_ok=True)
+        if multiclass:
+            for k, center in enumerate(CENTER_NAMES):
+                shap_explanation(model, x, out_dir, f"center_classif_{center}_seed_{seed}", class_index=k)
+        else:
+            shap_explanation(model, x, out_dir, f"binary_classif_seed_{seed}")
+
+    return {"experiment": name, "seed": seed, "n": len(table), "n_test": len(y_test), "auc_test": auc, "balanced_acc": balanced_acc, "model": model}
 
 
 def run_meta_analysis_classify_centers(table):
@@ -86,9 +98,9 @@ def run_meta_analysis_classify_centers(table):
 
     results = []
     for seed in SEEDS:
-        results.append(run_xgboost(table, "centre  cu metadate", seed=seed, drop_columns=INTENSITY_COLUMNS, multiclass=True))
-        results.append(run_xgboost(table, "centre  doar cu conversie", seed=seed, drop_columns=not_conversion, multiclass=True))
-        results.append(run_xgboost(table, "centre cu metadate + intensitate", seed=seed, multiclass=True))
+        results.append(run_xgboost(table, "centre_cu_metadate", seed=seed, drop_columns=INTENSITY_COLUMNS, multiclass=True))
+        results.append(run_xgboost(table, "centre_doar_cu_conversie", seed=seed, drop_columns=not_conversion, multiclass=True))
+        results.append(run_xgboost(table, "centre_cu_metadate_si_intensitate", seed=seed, multiclass=True))
 
     all_runs = pd.DataFrame(results).drop(columns=["model"])
     all_runs.to_csv(os.path.join(OUT_DIR, "classif_centers_all_runs.csv"), index=False)

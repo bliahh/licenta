@@ -30,7 +30,7 @@ def meta_build_train_test_split(dataset, include_center=False, seed=42):
 
 def train_xgboost(x_train, y_train, multiclass=False):
     print("\nTRAIN\n")
-    model = XGBClassifier(n_jobs=-1, random_state=42, tree_method="hist", enable_categorical=True, eval_metric="mlogloss" if multiclass else "logloss")
+    model = XGBClassifier(n_jobs=1, random_state=42, tree_method="hist", enable_categorical=True, eval_metric="mlogloss" if multiclass else "logloss")
     param_grid = {
         "n_estimators": [100, 200, 300],
         "max_depth": [2, 3, 4],
@@ -38,7 +38,7 @@ def train_xgboost(x_train, y_train, multiclass=False):
         "subsample": [0.7, 0.8, 1.0],
         "colsample_bytree": [0.7, 0.8, 1.0],
     }
-    random_search = RandomizedSearchCV(model, param_grid, n_iter=30, cv=5, random_state=42, n_jobs=-1, scoring="roc_auc_ovr" if multiclass else "roc_auc")
+    random_search = RandomizedSearchCV(model, param_grid, n_iter=30, cv=5, random_state=42, n_jobs=4, scoring="roc_auc_ovr" if multiclass else "roc_auc")
     random_search.fit(x_train, y_train)
     print("Best Params:", random_search.best_params_)
     print("CV AUC:", round(random_search.best_score_, 3))
