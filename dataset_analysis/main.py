@@ -4,9 +4,9 @@ import glob
 from common.data.labels import build_bin_samples, find_binary_distribution, print_distribution
 from common.data.split import build_train_val_test_split
 from common.paths import LABELS_DIR, DATASET_ROOT
-from dataset_analysis.analysis.general import build_patient_table, dataset_report, group_counts, aneurysm_sizes
+from dataset_analysis.analysis.TopAneu.general import build_patient_table, dataset_report, group_counts, aneurysm_sizes
 from dataset_analysis.meta_analysis.TopAneu.metadata_analysis import build_dataset_table, attach_descrip_info
-from dataset_analysis.analysis.patch import patch_distribution
+from dataset_analysis.analysis.TopAneu.patch import patch_distribution
 from dataset_analysis.config import OUT_DIR, ANEURYSM_MASK_DIR, MIN_ANEURYSM_MM3
 
 

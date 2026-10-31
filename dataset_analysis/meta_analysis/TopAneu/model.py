@@ -2,10 +2,34 @@ import sklearn
 from sklearn.model_selection import  RandomizedSearchCV
 from sklearn.metrics import roc_auc_score, classification_report, confusion_matrix, balanced_accuracy_score
 from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
 
 ID_COLUMNS = ["file", "patient", "scan", "label"]
 
 center_labels = {1:0, 2:1, 4:2, 5:3}
+
+
+
+
+def compute_metrics(y_test, p, multiclass=False):
+    if multiclass:
+        y_pred = p.argmax(axis=1)
+        return {"auc_test": roc_auc_score(y_test, p, multi_class="ovr"),
+                "accuracy": accuracy_score(y_test, y_pred),
+                "balanced_acc": balanced_accuracy_score(y_test, y_pred),
+                "precision_macro": precision_score(y_test, y_pred, average="macro", zero_division=0),
+                "recall_macro": recall_score(y_test, y_pred, average="macro", zero_division=0),
+                "f1_macro": f1_score(y_test, y_pred, average="macro", zero_division=0)}
+    y_pred = (p >= 0.5).astype(int)
+    return {"auc_test": roc_auc_score(y_test, p),
+            "accuracy": accuracy_score(y_test, y_pred),
+            "balanced_acc": balanced_accuracy_score(y_test, y_pred),
+            "sensitivity": recall_score(y_test, y_pred, zero_division=0),
+            "specificity": recall_score(y_test, y_pred, pos_label=0, zero_division=0),
+            "precision": precision_score(y_test, y_pred, zero_division=0),
+            "f1": f1_score(y_test, y_pred, zero_division=0)}
+
 
 
 def map_center_labels(table):
