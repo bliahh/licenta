@@ -6,8 +6,10 @@ from sklearn.metrics import roc_auc_score
 from common.data.labels import build_bin_samples
 from common.paths import DATASET_ROOT
 from dataset_analysis.meta_analysis.TopAneu.XAI import shap_explanation
-from dataset_analysis.meta_analysis.TopAneu.metadata_analysis import build_dataset_table, attach_descrip_info
-from dataset_analysis.meta_analysis.TopAneu.model import meta_build_train_test_split, train_xgboost, test_classifier, map_center_labels, test_classifier_multiclass
+from dataset_analysis.meta_analysis.TopAneu.metadata_analysis import build_dataset_table, attach_descrip_info, \
+    extract_headers
+from dataset_analysis.meta_analysis.TopAneu.model import meta_build_train_test_split, train_xgboost, test_classifier, \
+    map_center_labels, test_classifier_multiclass, compute_metrics
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../out")
 TABLE_CSV = os.path.join(OUT_DIR, "metadata_topaneu.csv")
@@ -50,20 +52,25 @@ INTENSITY_COLUMNS = ["int_min", "int_max", "int_mean", "int_std", "int_p1", "int
 
 def run_meta_analysis_without_center(table):
     center1 = table[table["center"] == 1]
+    not_conversion = [c for c in table.columns if c not in CONVERSION_COLUMNS + NOT_FEATURES + ["center"]]
     results = []
     for seed in SEEDS:
         results.append(run_xgboost(table, "tot setul cu metadate", seed=seed, drop_columns=INTENSITY_COLUMNS))
         results.append(run_xgboost(center1, "center1 cu metadate", seed=seed, drop_columns=INTENSITY_COLUMNS))
+        results.append(run_xgboost(table, "tot setul doar cu conversie", seed=seed, drop_columns=not_conversion))
+        results.append(run_xgboost(center1, "center1 doar cu conversie", seed=seed, drop_columns=not_conversion))
         results.append(run_xgboost(table, "tot setul cu metadate + intensitate", seed=seed))
         results.append(run_xgboost(center1, "center1 cu metadate + intensitate", seed=seed))
 
     all_runs = pd.DataFrame(results).drop(columns=["model"])
     all_runs.to_csv(os.path.join(OUT_DIR, "binary_classif_no_center_all_runs.csv"), index=False)
-    summary = all_runs.groupby("experiment")["auc_test"].agg(["mean", "std"]).round(3)
+
+    metric_columns = [c for c in all_runs.columns if c not in ["experiment", "seed", "n", "n_test"]]
+    summary = all_runs.groupby("experiment")[metric_columns].agg(["mean", "std"]).round(3)
+
     summary.to_csv(os.path.join(OUT_DIR, "binary_classif_no_center.csv"))
     print("\n", summary.to_string())
     return results
-
 
 def run_xgboost(table, name, include_center=False, seed=42, drop_columns=(), multiclass=False, run_shap = True):
     table = table.drop(columns=[c for c in drop_columns if c in table])
@@ -75,7 +82,7 @@ def run_xgboost(table, name, include_center=False, seed=42, drop_columns=(), mul
     else:
         p = test_classifier(model, x_test, y_test)
         auc, balanced_acc = roc_auc_score(y_test, p), None
-
+    metrics = compute_metrics(y_test, p, multiclass)
 
     if run_shap:
         x = pd.concat([x_train, x_test])
@@ -87,8 +94,7 @@ def run_xgboost(table, name, include_center=False, seed=42, drop_columns=(), mul
         else:
             shap_explanation(model, x, out_dir, f"binary_classif_seed_{seed}")
 
-    return {"experiment": name, "seed": seed, "n": len(table), "n_test": len(y_test), "auc_test": auc, "balanced_acc": balanced_acc, "model": model}
-
+    return {"experiment": name, "seed": seed, "n": len(table), "n_test": len(y_test), **metrics, "model": model}
 
 def run_meta_analysis_classify_centers(table):
     table = table.copy()
@@ -104,7 +110,10 @@ def run_meta_analysis_classify_centers(table):
 
     all_runs = pd.DataFrame(results).drop(columns=["model"])
     all_runs.to_csv(os.path.join(OUT_DIR, "classif_centers_all_runs.csv"), index=False)
-    summary = all_runs.groupby("experiment")[["auc_test", "balanced_acc"]].agg(["mean", "std"]).round(3)
+
+    metric_columns = [c for c in all_runs.columns if c not in ["experiment", "seed", "n", "n_test"]]
+    summary = all_runs.groupby("experiment")[metric_columns].agg(["mean", "std"]).round(3)
+
     summary.to_csv(os.path.join(OUT_DIR, "classif_centers_summary.csv"))
     print("\n", summary.to_string())
     return results
@@ -113,6 +122,8 @@ def run_meta_analysis_classify_centers(table):
 
 
 def main():
+    extract_headers()
+
     table = load_or_build_table()
     print(table.shape)
     print(pd.crosstab(table["center"], table["label"]))

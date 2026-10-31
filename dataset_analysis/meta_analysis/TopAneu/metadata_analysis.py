@@ -11,12 +11,15 @@ SP = ["spacing_x", "spacing_y", "spacing_z"]
 DUPLICATES = ["topaneu_center4_ct_008_2_0000.nii.gz"]
 
 def extract_headers(data_root=DATASET_ROOT):
+    print("Extracting headers...")
+
     img_dir = os.path.join(data_root, "images")
     all_images = []
     for file in sorted(os.listdir(img_dir)):
         if not file.endswith((".nii", ".nii.gz")):
             continue
         img = nib.load(os.path.join(img_dir, file))
+        print(img)
         all_images.append((file,img))
     return all_images
 
