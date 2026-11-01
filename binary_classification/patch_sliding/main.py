@@ -2,14 +2,14 @@ import torch
 
 from common.paths import DEVICE
 from common.data.split import build_train_val_test_split, print_split_sizes
-from patch_sliding.config import PRESETS, ACTIVE_PRESET, PATCH, SAMPLER, MODEL
-from patch_sliding.data.loaders import sliding_window_loader
-from patch_sliding.data.preprocess import preprocess_all_splits
-from patch_sliding.evaluation.evaluator import evaluate_sliding_model
-from patch_sliding.evaluation.groups import patch_groups_report, patch_summary
-from patch_sliding.models.networks import ResnetArchitecture
-from patch_sliding.models.run import run_sliding
-from patch_sliding.models.trainer import train_sliding_window
+from binary_classification.patch_sliding.config import PRESETS, ACTIVE_PRESET, PATCH, SAMPLER, MODEL
+from binary_classification.patch_sliding.data.loaders import sliding_window_loader
+from binary_classification.patch_sliding.data.preprocess import preprocess_all_splits
+from binary_classification.patch_sliding.evaluation.evaluator import evaluate_sliding_model
+from binary_classification.patch_sliding.evaluation.groups import patch_groups_report, patch_summary
+from binary_classification.patch_sliding.models.networks import ResnetArchitecture
+from binary_classification.patch_sliding.models.run import run_sliding
+from binary_classification.patch_sliding.models.trainer import train_sliding_window
 
 
 def preprocess():

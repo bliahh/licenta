@@ -5,8 +5,8 @@ import torch
 from scipy import ndimage
 from skimage.morphology import skeletonize
 
-from patch_sliding.config import PREPROCESSED_DIR
-from patch_sliding.data.transforms import base_transform_dict
+from binary_classification.patch_sliding.config import PREPROCESSED_DIR
+from binary_classification.patch_sliding.data.transforms import base_transform_dict
 
 SPLITS = ("train", "val", "test")
 

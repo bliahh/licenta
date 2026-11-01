@@ -8,12 +8,12 @@ from common.paths import DEVICE
 from common.data.split import build_train_val_test_split, print_split_sizes
 from common.evaluation.metrics import compute_metrics_for_binary, confusion, clean_metrics
 from common.evaluation.thresholds import find_th, youden_th
-from patch_sliding.config import RUNS_DIR
-from patch_sliding.data.loaders import sliding_window_loader
-from patch_sliding.data.preprocess import preprocess_all_splits
-from patch_sliding.evaluation.groups import patch_auc_by_group
-from patch_sliding.models.networks import ResnetArchitecture
-from patch_sliding.models.run import run_sliding
+from binary_classification.patch_sliding.config import RUNS_DIR
+from binary_classification.patch_sliding.data.loaders import sliding_window_loader
+from binary_classification.patch_sliding.data.preprocess import preprocess_all_splits
+from binary_classification.patch_sliding.evaluation.groups import patch_auc_by_group
+from binary_classification.patch_sliding.models.networks import ResnetArchitecture
+from binary_classification.patch_sliding.models.run import run_sliding
 
 
 def load_run_config(run_dir):

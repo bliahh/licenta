@@ -8,7 +8,7 @@ from common.paths import PATIENTS_CSV
 from common.data.patient_info import center_of, patient_groups
 from common.evaluation.groups import group_metrics, print_groups
 from common.evaluation.thresholds import youden_mr_threshold
-from patch_sliding.config import RUNS_DIR, TABLES_DIR
+from binary_classification.patch_sliding.config import RUNS_DIR, TABLES_DIR
 
 
 def patch_auc_by_group(res, loader, samples, split_name="test"):
