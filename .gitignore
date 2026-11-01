@@ -36,3 +36,5 @@ public_out/
 tables/
 runs/
 archive/
+rsna_dataset/
+runs/

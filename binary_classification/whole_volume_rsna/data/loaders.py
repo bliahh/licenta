@@ -1,0 +1,73 @@
+import os, ast, glob
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+DATA_DIR = os.path.join(PROJECT_ROOT, "rsna_dataset")
+FOLDERS = ["mra", "ct", "ct_2"]
+
+
+def build_dataset_table():
+    tables = []
+    for folder in FOLDERS:
+        for log_path in glob.glob(os.path.join(DATA_DIR, folder, "log_*.csv")):
+            table = pd.read_csv(log_path)
+            table["path"] = os.path.join(DATA_DIR, folder, "preprocessed") + "/" + table["uid"] + ".npy"
+            tables.append(table)
+    index = pd.concat(tables, ignore_index=True)
+
+    n_before = len(index)
+    index = index[index["ok"] & (index["n_files"] <= 2)].reset_index(drop=True)
+    print(f"[ BUILD DATASET TABLE ] dropped: {n_before - len(index)}")
+
+    index[["x", "y", "z"]] = index["shape"].apply(ast.literal_eval).tolist()
+    index["large_coverage"] = index["z"] > 192
+
+    missing = index[~index["path"].map(os.path.exists)]
+    print("lipsesc:", len(missing))
+    print(missing.groupby("modality").size())
+    print(missing["path"].str.split("/").str[-3].value_counts())  # din ce folder: mra / ct / ct_2
+    print(missing["path"].head(3).tolist())
+
+    print(pd.crosstab(index["modality"], index["label"]))
+
+    index.to_csv(os.path.join(DATA_DIR, "index.csv"), index=False)
+    return index
+
+
+
+def build_split(seed):
+    index = pd.read_csv(os.path.join(DATA_DIR, "index.csv"))
+    strata = index["modality"] + "_" + index["label"].astype(str)
+    train_val, test = train_test_split(index, test_size=0.15, stratify=strata, random_state=seed)
+    strata_tv = train_val["modality"] + "_" + train_val["label"].astype(str)
+    train, val = train_test_split(train_val, test_size=0.15 / 0.85, stratify=strata_tv, random_state=seed)
+
+    index["split"] = "train"
+    index.loc[val.index, "split"] = "val"
+    index.loc[test.index, "split"] = "test"
+    index.to_csv(os.path.join(DATA_DIR, f"split_seed{seed}.csv"), index=False)
+    return index
+
+
+def load_split(seed, only_mr=False, only_ct=False):
+    split = pd.read_csv(os.path.join(DATA_DIR, f"split_seed{seed}.csv"))
+    if only_mr:
+        split = split[split["modality"] == "MRA"]
+    elif only_ct:
+        split = split[split["modality"] == "CTA"]
+    return split[split["split"] == "train"], split[split["split"] == "val"], split[split["split"] == "test"]
+
+
+
+
+
+if __name__ == "__main__":
+
+    print("DATA_DIR =", os.path.abspath(DATA_DIR), "| exista:", os.path.isdir(DATA_DIR))
+    for folder in FOLDERS:
+        print(folder, glob.glob(os.path.join(DATA_DIR, folder, "log_*.csv")))
+
+
+    build_dataset_table()
