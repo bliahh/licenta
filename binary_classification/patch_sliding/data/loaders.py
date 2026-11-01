@@ -1,10 +1,10 @@
 from monai.data import DataLoader
 from torch.utils.data import default_collate
 
-from patch_sliding.config import NUM_WORKERS, PATCH, SAMPLER
-from patch_sliding.data.datasets import SlidingWindowPatchDataset
-from patch_sliding.data.samplers import build_sampler
-from patch_sliding.data.transforms import random_transform_dict
+from binary_classification.patch_sliding.config import NUM_WORKERS, PATCH, SAMPLER
+from binary_classification.patch_sliding.data.datasets import SlidingWindowPatchDataset
+from binary_classification.patch_sliding.data.samplers import build_sampler
+from binary_classification.patch_sliding.data.transforms import random_transform_dict
 
 
 def sliding_window_loader(samples, batch_size, split, is_training=True, patch=None, sampler=None):

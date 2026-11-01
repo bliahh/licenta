@@ -4,7 +4,7 @@ from sklearn.metrics import confusion_matrix
 from tqdm import tqdm
 
 from common.evaluation.metrics import compute_metrics_for_binary
-from patch_sliding.models.aggregation import AGGREGATORS, aggregate_patches
+from binary_classification.patch_sliding.models.aggregation import AGGREGATORS, aggregate_patches
 
 
 def run_sliding(model, loader, criterion, optimizer, device, is_train, threshold=0.5, desc="", scaler=None, max_grad_norm=1.0):

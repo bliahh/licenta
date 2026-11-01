@@ -7,11 +7,11 @@ import optuna
 from common.paths import DEVICE
 from common.evaluation.plots import plot_metrics
 from common.utils.io import save_metrics
-from whole_volume.config import FINAL_EPOCHS, PATIENCE, OPTUNA_DIR
-from whole_volume.models.loss import build_loss, get_loss_params
-from whole_volume.models.networks import build_model
-from whole_volume.models.run import run
-from whole_volume.utils.helpers import get_model_dir, get_eval_dir
+from binary_classification.whole_volume_TopAneu.config import FINAL_EPOCHS, PATIENCE, OPTUNA_DIR
+from binary_classification.whole_volume_TopAneu.models.loss import build_loss, get_loss_params
+from binary_classification.whole_volume_TopAneu.models.networks import build_model
+from binary_classification.whole_volume_TopAneu.models.run import run
+from binary_classification.whole_volume_TopAneu.utils.helpers import get_model_dir, get_eval_dir
 
 
 def train_model(name, train_loader, val_loader, loss_name, pos_weight=None, focal_alpha=0.5, focal_gamma=2.0, lr=1e-4, weight_decay=1e-5, epochs=30, dropout=0.0, device=None, save_path="best_model.pth", trial=None, patience=None, eval_dir=None):

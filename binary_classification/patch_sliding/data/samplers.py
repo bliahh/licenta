@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Sampler
 
-from patch_sliding.config import POSITIVE, NEG_BIF, NEGATIVE
+from binary_classification.patch_sliding.config import POSITIVE, NEG_BIF, NEGATIVE
 
 
 class PosNegSampler(Sampler):

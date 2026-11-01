@@ -7,9 +7,9 @@ import torch
 from common.paths import DEVICE
 from common.evaluation.plots import plot_metrics
 from common.utils.io import save_metrics
-from patch_sliding.config import RUNS_DIR
-from patch_sliding.data.loaders import sliding_window_loader
-from patch_sliding.models.run import run_sliding
+from binary_classification.patch_sliding.config import RUNS_DIR
+from binary_classification.patch_sliding.data.loaders import sliding_window_loader
+from binary_classification.patch_sliding.models.run import run_sliding
 
 
 def train_sliding_window(model, epochs, train_samples, val_samples, batch_size=8, criterion=None, optimizer=None, scaler=None, patience=10, run_name=None, run_config=None):

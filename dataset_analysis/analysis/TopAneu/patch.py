@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 
 from dataset_analysis.config import OUT_DIR
-from patch_sliding.config import PATCH, POSITIVE, WEAK_POSITIVE, NEG_BIF, NEGATIVE
-from patch_sliding.data.datasets import SlidingWindowPatchDataset
+from binary_classification.patch_sliding.config import PATCH, POSITIVE, WEAK_POSITIVE, NEG_BIF, NEGATIVE
+from binary_classification.patch_sliding.data.datasets import SlidingWindowPatchDataset
 
 CATEGORY_NAMES = {POSITIVE: "pos", WEAK_POSITIVE: "ambiguous", NEG_BIF: "neg_bif", NEGATIVE: "neg"}
 

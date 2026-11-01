@@ -4,7 +4,7 @@ import torch
 from scipy import ndimage
 from torch.utils.data import Dataset
 
-from patch_sliding.config import PREPROCESSED_DIR, WEAK_POSITIVE, POSITIVE, NEG_BIF, NEGATIVE
+from binary_classification.patch_sliding.config import PREPROCESSED_DIR, WEAK_POSITIVE, POSITIVE, NEG_BIF, NEGATIVE
 
 
 class SlidingWindowPatchDataset(Dataset):
