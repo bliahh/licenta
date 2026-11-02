@@ -22,12 +22,16 @@ def base_transforms(modality):
         T.EnsureTyped(keys="image"),
     ])
 
+CROP = (192, 192, 192)
 
-
-def train_transforms():
-    return T.Compose([
+def train_transforms(spatial=True):
+    spatial_transforms = [
         T.RandFlip(prob=0.5, spatial_axis=0),
         T.RandAffine(prob=0.3, rotate_range=(0.17, 0.17, 0.17), scale_range=(0.1, 0.1, 0.1), padding_mode="border"),
+    ] if spatial else []
+    return T.Compose([
+        T.CenterSpatialCrop(CROP),
+        *spatial_transforms,
         T.RandScaleIntensity(factors=0.1, prob=0.3),
         T.RandShiftIntensity(offsets=0.1, prob=0.3),
         T.EnsureType(data_type="tensor", track_meta=False),
@@ -35,4 +39,7 @@ def train_transforms():
 
 
 def eval_transforms():
-    return T.EnsureType(data_type="tensor", track_meta=False)
+    return T.Compose([
+        T.CenterSpatialCrop(CROP),
+        T.EnsureType(data_type="tensor", track_meta=False),
+    ])
