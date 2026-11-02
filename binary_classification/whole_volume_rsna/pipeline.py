@@ -12,13 +12,12 @@ EVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 USE_AMP = DEVICE.type == "cuda"
 
 
-def run_experiment(name, only_mr=False, only_ct=False, seeds=SEEDS):
+def run_experiment(name, only_mr=False, only_ct=False, seeds=SEEDS, multitask=True, roi_size=None, lambd=1.0):
     results = []
     for seed in seeds:
         run_dir = os.path.join(RUNS_DIR, f"{name}_seed{seed}")
-        train(seed, only_mr=only_mr, only_ct=only_ct, run_dir=run_dir)
-        metrics = test(run_dir, seed, only_mr=only_mr, only_ct=only_ct,device=DEVICE, use_amp=USE_AMP)
-        results.append(metrics)
+        train(seed, only_mr=only_mr, only_ct=only_ct, run_dir=run_dir, multitask=multitask, roi_size=roi_size,lambd= lambd)
+        metrics = test(run_dir, seed, only_mr=only_mr, only_ct=only_ct, device=DEVICE, use_amp=USE_AMP)
         results.append({"seed": seed, **metrics})
 
     results = pd.DataFrame(results)
@@ -33,9 +32,14 @@ def run_only_cta():
 
 
 def run_only_mra():
-    return run_experiment("mra", only_mr=True)
+    return run_experiment("mra_roi96", only_mr=True)
 
 
 def run_joint():
     return run_experiment("combined")
 
+def run_only_mra_roi96():
+    return run_experiment("mra_roi96_no_multitask", only_mr=True, seeds=(0,), multitask=True, roi_size=96)
+
+def run_only_mra_roi96_lambd0():
+    return run_experiment("mra_roi96_lambd0", only_mr=True, seeds=(0,), multitask=True, roi_size=96, lambd=0.0)
