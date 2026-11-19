@@ -48,20 +48,20 @@ def localization_hit_rate(table, peaks, points, tolerance=1, roi_size=None):
         hits.append(cell_distance.min() <= tolerance)
     return float(np.mean(hits)) if hits else float("nan")
 
-def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr=1e-4, batch_size=1, patience=7, min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0, augm_proba=0.5, roi_size = None):
+def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr=1e-4, batch_size=1, patience=7, min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0, augm_proba=0.5, roi_size = None, roi_jitter = 0, n_outputs=1, vessel_dilation=None):
     set_seed(seed)
 
     train_table, val_table, _ = load_split(seed, only_mr=only_mr, only_ct=only_ct)
 
 
-    train_loader = build_loader(train_table, is_training=True, batch_size=batch_size, num_workers=num_workers, use_amp=USE_AMP, multitask=multitask, sigma=sigma, augm_proba=augm_proba, roi_size=roi_size)
-    val_loader = build_loader(val_table, is_training=False, batch_size=batch_size, num_workers=num_workers,  use_amp=USE_AMP, multitask=multitask, sigma=sigma, roi_size=roi_size)
+    train_loader = build_loader(train_table, is_training=True, batch_size=batch_size, num_workers=num_workers, use_amp=USE_AMP, multitask=multitask, sigma=sigma, augm_proba=augm_proba, roi_size=roi_size, roi_jitter=roi_jitter, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
+    val_loader = build_loader(val_table, is_training=False, batch_size=batch_size, num_workers=num_workers,  use_amp=USE_AMP, multitask=multitask, sigma=sigma, roi_size=roi_size, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
 
 
     points = load_points()
 
     if multitask:
-        model = ResNet18MultiTask(dropout=dropout, top_n=top_n, conv1_stride=1 if roi_size else 2).to(DEVICE)
+        model = ResNet18MultiTask(dropout=dropout, top_n=top_n, conv1_stride=1 if roi_size else 2, n_outputs=n_outputs).to(DEVICE)
     else:
         model = ResNet18(dropout=dropout).to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
@@ -78,6 +78,9 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
               "pos_weight": pos_weight, "augm_proba": augm_proba,
               "n_train": len(train_table), "n_val": len(val_table),
               "roi_size": roi_size,
+              "roi_jitter": roi_jitter,
+              "n_outputs": n_outputs,
+              "vessel_dilation": vessel_dilation
               }
 
     with open(os.path.join(run_dir, "config.json"), "w") as f:
@@ -95,7 +98,13 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
         train_loss, train_loss_cls, train_loss_heat = run(model, train_loader, criterion, scaler, optimizer, DEVICE, USE_AMP, desc=f"Epoch {epoch + 1}/{epochs}", heatmap_loss=heatmap_loss if multitask else None, lambd=lambd, pos_weight=pos_weight)
 
         val_logits, val_labels, val_peaks = predict(model, val_loader, device=DEVICE, use_amp=USE_AMP, return_peaks=True)
+        val_logits, val_labels = np.asarray(val_logits, np.float32), np.asarray(val_labels, np.float32)
         val_loss = criterion(torch.tensor(val_logits), torch.tensor(val_labels)).item()
+        if val_logits.ndim == 2:
+            val_group_auc = float(np.nanmean([roc_auc_score(val_labels[:, g], val_logits[:, g])  for g in range(1, val_logits.shape[1]) if 0 < val_labels[:, g].sum() < len(val_labels)]))
+            val_logits, val_labels = val_logits[:, 0], val_labels[:, 0]
+        else:
+            val_group_auc = float("nan")
         val_auc = roc_auc_score(val_labels, val_logits)
         val_hit = localization_hit_rate(val_table, val_peaks, points, roi_size=roi_size) if multitask else float("nan")
         val_hit_exact = localization_hit_rate(val_table, val_peaks, points, tolerance=0, roi_size=roi_size) if multitask else float("nan")
@@ -103,9 +112,9 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
         lr_saved = scheduler.get_last_lr()[0]
         scheduler.step()
 
-        history.append({"epoch": epoch, "train_loss": train_loss, "train_loss_cls": train_loss_cls, "train_loss_heat": train_loss_heat, "val_loss": val_loss, "val_auc": val_auc, "val_hit": val_hit, "lr": lr_saved, "seconds": round(time.time() - start, 1), "val_hit_exact": val_hit_exact})
+        history.append({"epoch": epoch, "train_loss": train_loss, "train_loss_cls": train_loss_cls, "train_loss_heat": train_loss_heat, "val_loss": val_loss, "val_auc": val_auc, "val_hit": val_hit, "lr": lr_saved, "seconds": round(time.time() - start, 1), "val_hit_exact": val_hit_exact, "val_group_auc": val_group_auc})
         pd.DataFrame(history).to_csv(os.path.join(run_dir, "history.csv"), index=False)
-        print(f"[ TRAIN ] epoch {epoch + 1} | train_loss_binary_classif {train_loss_cls:.4f} | train_loss_loc {train_loss_heat:.4f} | val loss {val_loss:.4f} | val AUC {val_auc:.4f} | val hit {val_hit:.3f} | val hit exact {val_hit_exact:.3f}| scale {scaler.get_scale():.0f} | {history[-1]['seconds']} s")
+        print(f"[ TRAIN ] epoch {epoch + 1} | train_loss_binary_classif {train_loss_cls:.4f} | train_loss_loc {train_loss_heat:.4f} | val loss {val_loss:.4f} | val AUC {val_auc:.4f} | val hit {val_hit:.3f} | val hit exact {val_hit_exact:.3f} | val group AUC {val_group_auc:.3f} | scale {scaler.get_scale():.0f} | {history[-1]['seconds']} s")
 
         torch.save(model.state_dict(), os.path.join(run_dir, "last.pt"))
 

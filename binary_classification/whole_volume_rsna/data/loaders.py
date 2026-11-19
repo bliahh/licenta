@@ -3,6 +3,7 @@ import os, ast, glob
 import numpy as np
 import pandas as pd
 import torch
+from scipy.ndimage import binary_dilation
 from torch.utils.data import Dataset
 from monai.data import DataLoader
 from sklearn.model_selection import train_test_split
@@ -10,12 +11,46 @@ from sklearn.model_selection import train_test_split
 from binary_classification.whole_volume_rsna.data.transforms import eval_transforms, train_transforms
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-DATA_DIR = os.path.join(PROJECT_ROOT, "rsna_dataset")
+DATA_DIR = os.environ.get("RSNA_DATA_DIR", os.path.join(PROJECT_ROOT, "rsna_dataset"))
 FOLDERS = ["mra", "ct", "ct_2"]
 CROP = (128, 128, 128)
 
 ROI_CENTER = {"CTA": (95, 69, 84), "MRA": (95, 75, 97)}
 ROI_SIZE = 96
+MASK_DIR = os.path.join(DATA_DIR, "nnunet_masks")
+
+
+def load_vessel_mask(uid):
+    return np.load(os.path.join(MASK_DIR, f"{uid}.npz"))["mask"]
+
+
+LOCATION_GROUPS = {
+    "Left Infraclinoid Internal Carotid Artery": 1, "Right Infraclinoid Internal Carotid Artery": 1,
+    "Left Supraclinoid Internal Carotid Artery": 1, "Right Supraclinoid Internal Carotid Artery": 1,
+    "Left Middle Cerebral Artery": 2, "Right Middle Cerebral Artery": 2,
+    "Anterior Communicating Artery": 3, "Left Anterior Cerebral Artery": 3, "Right Anterior Cerebral Artery": 3,
+    "Left Posterior Communicating Artery": 4, "Right Posterior Communicating Artery": 4,
+    "Basilar Tip": 5, "Other Posterior Circulation": 5,
+}
+GROUP_NAMES = ["any", "ICA", "MCA", "ACom_ACA", "PCom", "Posterior"]
+
+LOCATIONS = list(LOCATION_GROUPS)
+LOCATION_NAMES = ["any", "L_InfraICA", "R_InfraICA", "L_SupraICA", "R_SupraICA", "L_MCA", "R_MCA",
+                  "ACom", "L_ACA", "R_ACA", "L_PCom", "R_PCom", "BasilarTip", "OtherPost"]
+
+
+def location_scheme(n_outputs):
+    if n_outputs == len(LOCATION_NAMES):
+        return {name: i + 1 for i, name in enumerate(LOCATIONS)}, LOCATION_NAMES
+    return LOCATION_GROUPS, GROUP_NAMES
+
+
+def mirror_permutation(mapping, n_outputs):
+    permutation = np.arange(n_outputs)
+    for name, channel in mapping.items():
+        mirrored = name.replace("Left", "#").replace("Right", "Left").replace("#", "Right")
+        permutation[channel] = mapping[mirrored]
+    return permutation
 
 def build_dataset_table():
     tables = []
@@ -79,6 +114,24 @@ def load_points(path=os.path.join(DATA_DIR, "localizers_npy.csv")):
     return {uid: group[["i", "j", "k"]].to_numpy(np.float32) for uid, group in localizers.groupby("uid")}
 
 
+def load_points_with_groups(path=os.path.join(DATA_DIR, "localizers_npy.csv"), mapping=LOCATION_GROUPS):
+    localizers = pd.read_csv(path)
+    localizers = localizers[localizers["inside"]]
+    unknown = set(localizers["location"]) - set(mapping)
+    assert not unknown, f"unknown locations: {unknown}"
+    localizers = localizers.assign(group=localizers["location"].map(mapping))
+    return {uid: (group[["i", "j", "k"]].to_numpy(np.float32), group["group"].to_numpy(np.int64))
+            for uid, group in localizers.groupby("uid")}
+
+
+def load_location_labels(path=os.path.join(DATA_DIR, "train.csv"), mapping=LOCATION_GROUPS):
+    table = pd.read_csv(path).set_index("SeriesInstanceUID")
+    labels = np.zeros((len(table), max(mapping.values())), np.float32)
+    for name, group in mapping.items():
+        labels[:, group - 1] = np.maximum(labels[:, group - 1], table[name].to_numpy(np.float32))
+    return dict(zip(table.index, labels))
+
+
 VOLUME_SIZE = 192
 GRID_SIZE = 12
 
@@ -106,18 +159,27 @@ class VolumeDataset(Dataset):
         return self.transform(x), torch.tensor(self.labels[i])
 
 class MultiTaskVolumeDataset(Dataset):
-    def __init__(self, table, transform, sigma, augm_proba, augment=False, roi_size=None):
+    def __init__(self, table, transform, sigma, augm_proba, augment=False, roi_size=None, roi_jitter=0, n_outputs=1, vessel_dilation=None):
         super().__init__()
         self.paths = table["path"].tolist()
         self.labels = table["label"].astype("float32").tolist()
         self.uids = table["uid"].tolist()
         self.modalities = table["modality"].tolist()
         self.transform = transform
-        self.points = load_points()
+        self.n_outputs = n_outputs
+        mapping, _ = location_scheme(n_outputs)
+        self.mirror = mirror_permutation(mapping, n_outputs) if n_outputs > 1 else None
+        self.points = load_points_with_groups(mapping=mapping)
+        self.location_labels = load_location_labels(mapping=mapping) if n_outputs > 1 else None
+        if self.location_labels is not None:
+            missing = [uid for uid in self.uids if uid not in self.location_labels]
+            assert not missing, f"series without location labels: {len(missing)}"
         self.sigma = sigma
         self.augment = augment
         self.augm_proba = augm_proba
         self.roi_size = roi_size
+        self.roi_jitter = roi_jitter
+        self.vessel_dilation = vessel_dilation
 
     def __len__(self):
         return len(self.paths)
@@ -133,32 +195,54 @@ class MultiTaskVolumeDataset(Dataset):
     def __getitem__(self, index):
         uid, modality = self.uids[index], self.modalities[index]
         volume = np.load(self.paths[index], mmap_mode="r")
-        points = self.points.get(uid, np.zeros((0, 3), np.float32)).copy()
+        mask = load_vessel_mask(uid) if self.vessel_dilation is not None else None
+        points, groups = self.points.get(uid, (np.zeros((0, 3), np.float32), np.zeros(0, np.int64)))
+        points = points.copy()
 
         if self.roi_size is not None:
             start = roi_start(modality, self.roi_size)
+            if self.augment and self.roi_jitter > 0:
+                start = start + torch.randint(-self.roi_jitter, self.roi_jitter + 1, (3,)).numpy()
+            start = np.clip(start, 0, VOLUME_SIZE - self.roi_size)
             end = start + self.roi_size
             volume = volume[start[0]:end[0], start[1]:end[1], start[2]:end[2]]
-            points = points_to_roi(points, modality, self.roi_size)
+            if mask is not None:
+                mask = mask[start[0]:end[0], start[1]:end[1], start[2]:end[2]]
+            points = points - start
+            inside = ((points >= 0) & (points < self.roi_size)).all(axis=1)
+            points, groups = points[inside], groups[inside]
 
         volume = torch.from_numpy(volume.astype(np.float32))[None]
         if self.transform is not None:
             volume = self.transform(volume)
+        if mask is not None:
+            keep = binary_dilation(mask > 0, iterations=self.vessel_dilation) if self.vessel_dilation > 0 else mask > 0
+            volume = torch.where(torch.from_numpy(keep)[None], volume, volume.min())
 
+        location_label = self.location_labels[uid] if self.n_outputs > 1 else None
         if self.augment and torch.rand(1) < self.augm_proba:
             volume = torch.flip(volume, dims=[1])
             points[:, 0] = (volume.shape[1] - 1) - points[:, 0]
+            if self.mirror is not None:
+                groups = self.mirror[groups]
+                location_label = location_label[self.mirror[1:] - 1]
 
-        heat_map = self.make_gaussian(points, self.sigma, volume.shape[1] // GRID_SIZE)
+        cell_size = volume.shape[1] // GRID_SIZE
+        heat_map = self.make_gaussian(points, self.sigma, cell_size)
+        label = torch.tensor(self.labels[index])
+        if self.n_outputs > 1:
+            channels = [heat_map] + [self.make_gaussian(points[groups == g], self.sigma, cell_size) for g in range(1, self.n_outputs)]
+            heat_map = torch.cat(channels)
+            label = torch.tensor([self.labels[index], *location_label], dtype=torch.float32)
         has_target = 0.0 if self.labels[index] == 1 and len(points) == 0 else 1.0
-        return volume, torch.tensor(self.labels[index]), heat_map, torch.tensor(has_target)
+        return volume, label, heat_map, torch.tensor(has_target)
 
 
-def build_loader(index, is_training, batch_size, num_workers, use_amp, augment=True, multitask=False, sigma=1.0, augm_proba=0.5, roi_size=None):
+def build_loader(index, is_training, batch_size, num_workers, use_amp, augment=True, multitask=False, sigma=1.0, augm_proba=0.5, roi_size=None, roi_jitter=0, n_outputs=1, vessel_dilation=None):
     use_augmentation = is_training and augment
     transform = train_transforms(spatial=not multitask) if use_augmentation else eval_transforms()
     if multitask:
-        dataset = MultiTaskVolumeDataset(index, transform=transform, sigma=sigma, augm_proba=augm_proba, augment=use_augmentation, roi_size=roi_size)
+        dataset = MultiTaskVolumeDataset(index, transform=transform, sigma=sigma, augm_proba=augm_proba, augment=use_augmentation, roi_size=roi_size, roi_jitter=roi_jitter, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
     else:
         dataset = VolumeDataset(index, transform=transform)
     return DataLoader(dataset, batch_size=batch_size, shuffle=is_training, drop_last=is_training, num_workers=num_workers, pin_memory=use_amp)

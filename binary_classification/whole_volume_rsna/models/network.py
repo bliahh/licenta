@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from monai.networks.nets import resnet18
 
@@ -40,7 +41,7 @@ class ResNet18(nn.Module):
         return self.backbone(x)
 
 class ResNet18MultiTask(nn.Module):
-    def __init__(self, dropout=0.3, top_n=4, conv1_stride=2):
+    def __init__(self, dropout=0.3, top_n=4, conv1_stride=2, pretrained_path=None, n_outputs=1):
         super().__init__()
         backbone = resnet18(spatial_dims=3,
                             n_input_channels=1,
@@ -53,8 +54,9 @@ class ResNet18MultiTask(nn.Module):
                             norm=("group", {"num_groups": 8}))
         self.backbone = batchnorm_to_groupnorm(backbone, num_groups=8)
         self.dropout = nn.Dropout3d(dropout)
-        self.heat_head = nn.Conv3d(512, 1, kernel_size=1)
+        self.heat_head = nn.Conv3d(512, n_outputs, kernel_size=1)
         self.top_n = top_n
+        self.n_outputs = n_outputs
 
     def forward(self, x):
         b = self.backbone
@@ -67,6 +69,8 @@ class ResNet18MultiTask(nn.Module):
         x = self.dropout(x)
 
         heat = self.heat_head(x)
-        scores = heat.flatten(1)
-        logit = scores.topk(self.top_n, dim=1).values.mean(dim=1)
+        scores = heat.flatten(2)
+        logit = scores.topk(self.top_n, dim=2).values.mean(dim=2)
+        if self.n_outputs == 1:
+            logit = logit.squeeze(1)
         return logit, heat
