@@ -3,8 +3,10 @@ import os, ast, glob
 import numpy as np
 import pandas as pd
 import torch
+from SimpleITK import Compose
+from monai.transforms import RandFlip, RandRotate, RandZoom, RandScaleIntensity, RandShiftIntensity
 from scipy.ndimage import binary_dilation
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, WeightedRandomSampler
 from monai.data import DataLoader
 from sklearn.model_selection import train_test_split
 
@@ -158,6 +160,55 @@ class VolumeDataset(Dataset):
         x = torch.from_numpy(np.load(self.paths[i]).astype(np.float32))[None]
         return self.transform(x), torch.tensor(self.labels[i])
 
+
+SIGMA_MM = 2
+def make_labels(slices, z_coords, aneurysm_slices, cutoff=0.05):
+    labels = np.zeros(len(slices))
+    for aneurysm in aneurysm_slices:
+        if aneurysm not in slices:
+            continue
+        k = slices.index(aneurysm)
+        distance = z_coords - z_coords[k]
+        val = np.exp(-distance ** 2 / (2 * SIGMA_MM ** 2))
+        labels = np.maximum(labels, val)
+    labels[labels < cutoff] = 0
+    return labels
+
+
+
+
+class Dataset2D(Dataset):
+    def __init__(self, table, folder, transform=None, use_context=True):
+        super().__init__()
+        self.uids = table["uid"].tolist()
+        self.slice_idx = table["slice"].tolist()
+        self.labels = table["label"].astype("float32").tolist()
+        self.modalities = table["modality"].tolist()
+        self.folder = folder
+        self.transform = transform
+        self.use_2d = use_context
+
+    def __len__(self):
+        return len(self.uids)
+
+    def __getitem__(self, i):
+        volume = np.load(f"{self.folder}/{self.uids[i]}.npy", mmap_mode="r")
+        k, n = self.slice_idx[i], len(volume)
+        if not self.use_2d:
+            neighbors = [max(k - 1, 0), k, min(k + 1, n - 1)]
+            image = torch.from_numpy(np.array(volume[neighbors], dtype=np.float32))
+        else:
+            image = torch.from_numpy(np.array(volume[k,k+1], dtype=np.float32))
+
+        if self.transform:
+            image = self.transform(image)
+        return image, torch.tensor(self.labels[i]), self.uids[i], k
+
+
+
+
+
+
 class MultiTaskVolumeDataset(Dataset):
     def __init__(self, table, transform, sigma, augm_proba, augment=False, roi_size=None, roi_jitter=0, n_outputs=1, vessel_dilation=None):
         super().__init__()
@@ -246,6 +297,49 @@ def build_loader(index, is_training, batch_size, num_workers, use_amp, augment=T
     else:
         dataset = VolumeDataset(index, transform=transform)
     return DataLoader(dataset, batch_size=batch_size, shuffle=is_training, drop_last=is_training, num_workers=num_workers, pin_memory=use_amp)
+
+
+
+def filter_training(index, series_info, max_thickness=2.0):
+    thick = set(series_info.loc[series_info["slice_thickness"] > max_thickness, "uid"])
+
+    max_label = index.groupby("uid")["label"].max()
+    positive = series_info.loc[series_info["series_label"] == 1, "uid"]
+    missing = {uid for uid in positive if max_label.get(uid, 0) == 0}
+
+    print(f"excluded from train: {len(thick)} serii cu felii groase, {len(missing)} positives series w. no labels")
+    return index[~index["uid"].isin(thick | missing)]
+
+
+def transform_2d(is_training):
+    if not is_training:
+        return None
+    return Compose([
+        RandFlip(prob=0.5, spatial_axis=1),
+        RandRotate(range_x=0.17, prob=0.5, padding_mode="border"),
+        RandZoom(min_zoom=0.9, max_zoom=1.1, prob=0.5, keep_size=True),
+        RandScaleIntensity(factors=0.1, prob=0.5),
+        RandShiftIntensity(offsets=0.1, prob=0.5),
+    ])
+
+def build_2d_loader(index, series_info, folder, is_training, batch_size, num_workers, use_context=True, neg_ratio=3):
+    transform = None
+    if is_training:
+        index = filter_training(index, series_info=series_info, max_thickness=2.0)
+        transform = transform_2d(is_training)
+
+    dataset = Dataset2D(index, folder, transform=transform, use_context= use_context)
+    if is_training:
+        positive = (index["label"] > 0).to_numpy()
+        n_pos, n_neg = positive.sum(), (~positive).sum()
+        weights = np.where(positive, 1.0 / n_pos, neg_ratio / n_neg)
+        num_samples = int(n_pos * (1 + neg_ratio))
+        sampler = WeightedRandomSampler(weights, num_samples=num_samples, replacement=True)
+        return DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=num_workers, pin_memory=True, drop_last=True)
+    else:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+
+
 
 
 if __name__ == "__main__":
