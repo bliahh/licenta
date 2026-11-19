@@ -41,7 +41,6 @@ def run(model, loader, criterion, scaler, optimizer, device, use_amp, desc="trai
     return total_loss / n, total_cls / n, total_heat / n
 
 
-
 @torch.no_grad()
 def predict(model, loader, device, use_amp, desc="predict", return_peaks=False):
     model.eval()
@@ -52,15 +51,19 @@ def predict(model, loader, device, use_amp, desc="predict", return_peaks=False):
             output = model(volume)
         if isinstance(output, tuple):
             logit, heat_map = output
-            flat_index = heat_map.flatten(1).argmax(dim=1).cpu().numpy()
-            all_peaks.append(np.stack(np.unravel_index(flat_index, heat_map.shape[2:]), axis=1))
+            any_map = heat_map[:, :1]
+            flat_index = any_map.flatten(1).argmax(dim=1).cpu().numpy()
+            all_peaks.append(np.stack(np.unravel_index(flat_index, any_map.shape[2:]), axis=1))
         else:
             logit = output
-        all_logits.append(logit.float().cpu().numpy().reshape(-1))
-        all_labels.append(batch[1].numpy().reshape(-1))
+        logit = logit.float().cpu().numpy()
+        label = batch[1].numpy()
+        all_logits.append(logit.reshape(len(volume), -1))
+        all_labels.append(label.reshape(len(volume), -1))
     logits, labels = np.concatenate(all_logits), np.concatenate(all_labels)
+    if logits.shape[1] == 1:
+        logits, labels = logits[:, 0], labels[:, 0]
     if return_peaks:
         peaks = np.concatenate(all_peaks) if all_peaks else None
         return logits, labels, peaks
     return logits, labels
-

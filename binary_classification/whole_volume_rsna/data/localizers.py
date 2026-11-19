@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import argparse
 
 import numpy as np
 import pandas as pd
@@ -8,6 +10,7 @@ import matplotlib.pyplot as plt
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 DATA_DIR = os.path.join(PROJECT_ROOT, "rsna_dataset")
 VOLUME_SIZE = 192
+HALF_DIR = os.path.join(DATA_DIR, "mra_05")
 
 
 def point_mm_to_voxel(point_ras_mm, volume_affine, crop_offset):
@@ -16,10 +19,42 @@ def point_mm_to_voxel(point_ras_mm, volume_affine, crop_offset):
     return voxel_before_crop[:3] + np.asarray(crop_offset)
 
 
-def build_localizer_table():
+def parse_shape(shape_text):
+    return tuple(int(value) for value in re.findall(r"\d+", str(shape_text)))
+
+
+def crop_or_pad_offset(shape, size=VOLUME_SIZE):
+    offset = []
+    for axis, length_before in enumerate(shape):
+        length = min(length_before, size)
+        source_start = length_before - length if axis == 2 else (length_before - length) // 2
+        offset.append((size - length) // 2 - source_start)
+    return offset
+
+
+def check_half_spacing(geometry_table, half_log):
+    geometry = geometry_table.set_index("uid")
+    formula_mismatch = sum(
+        crop_or_pad_offset(parse_shape(row.shape)) != list(json.loads(row.offset))
+        for row in geometry.itertuples()
+    )
+    shared = half_log[half_log["uid"].isin(geometry.index)]
+    shape_difference = np.array([
+        np.abs(np.array(parse_shape(shape_half)) - 2 * np.array(parse_shape(geometry.loc[uid, "shape"]))).max()
+        for uid, shape_half in zip(shared["uid"], shared["shape"])
+    ])
+    print(f"[ LOCALIZERS ] offset formula vs geometry.csv: mismatches {formula_mismatch} / {len(geometry)}")
+    print(f"[ LOCALIZERS ] half shape vs 2 x 1 mm shape: max difference {shape_difference.max()} voxels "
+          f"| series compared {len(shape_difference)}")
+
+
+def build_localizer_table(spacing_scale=1, log_path=None, volume_dir=None, modality=None,
+                          output_name="localizers_npy.csv"):
     series_table = pd.read_csv(os.path.join(DATA_DIR, "index.csv"))
     geometry_table = pd.read_csv(os.path.join(DATA_DIR, "geometry.csv"))
     localizers = pd.read_csv(os.path.join(DATA_DIR, "localizers_world.csv"))
+    if modality is not None:
+        series_table = series_table[series_table["modality"] == modality]
 
     shape_check = series_table.merge(geometry_table[["uid", "shape"]], on="uid", suffixes=("", "_geometry"))
     shape_mismatch = shape_check[shape_check["shape"] != shape_check["shape_geometry"]]
@@ -27,8 +62,17 @@ def build_localizer_table():
 
     localizers = localizers[localizers["ok"] & localizers["uid"].isin(series_table["uid"])]
     localizers = localizers.merge(geometry_table[["uid", "affine", "offset"]], on="uid")
+    if log_path is not None:
+        half_log = pd.read_csv(log_path)
+        half_log = half_log[half_log["ok"]]
+        check_half_spacing(geometry_table[geometry_table["uid"].isin(series_table["uid"])], half_log)
+        half_offsets = {uid: crop_or_pad_offset(parse_shape(shape)) for uid, shape in zip(half_log["uid"], half_log["shape"])}
+        localizers = localizers[localizers["uid"].isin(half_offsets)]
+        localizers = localizers.assign(offset=localizers["uid"].map(lambda uid: json.dumps(half_offsets[uid])))
+
     voxel_coords = np.array([
-        point_mm_to_voxel([row.x, row.y, row.z], json.loads(row.affine), json.loads(row.offset))
+        spacing_scale * point_mm_to_voxel([row.x, row.y, row.z], json.loads(row.affine), [0, 0, 0])
+        + np.asarray(json.loads(row.offset))
         for row in localizers.itertuples()
     ])
     localizers["i"] = voxel_coords[:, 0].round(1)
@@ -36,13 +80,15 @@ def build_localizer_table():
     localizers["k"] = voxel_coords[:, 2].round(1)
     localizers["inside"] = ((voxel_coords >= 0) & (voxel_coords <= VOLUME_SIZE - 1)).all(axis=1)
     localizers = localizers.merge(series_table[["uid", "modality", "path"]], on="uid")
+    if volume_dir is not None:
+        localizers["path"] = localizers["uid"].map(lambda uid: os.path.join(volume_dir, f"{uid}.npy"))
 
     print(f"[ LOCALIZERS ] points: {len(localizers)} | inside cube: {localizers['inside'].sum()} "
           f"| multi-frame: {localizers['multiframe'].sum()}")
     print(localizers.groupby("modality")["inside"].mean().round(3))
 
     output_columns = ["uid", "modality", "location", "multiframe", "i", "j", "k", "inside", "path"]
-    localizers[output_columns].to_csv(os.path.join(DATA_DIR, "localizers_npy.csv"), index=False)
+    localizers[output_columns].to_csv(os.path.join(DATA_DIR, output_name), index=False)
     return localizers[output_columns]
 
 
@@ -76,16 +122,25 @@ def show_localizer(localizer_row, save_path=None, zoom_radius=24):
     plt.close(figure)
 
 
-
 if __name__ == "__main__":
-    localizers = build_localizer_table()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--half", action="store_true")
+    args = parser.parse_args()
+
+    if args.half:
+        localizers = build_localizer_table(spacing_scale=2, log_path=os.path.join(HALF_DIR, "log_0_1252.csv"),
+                                           volume_dir=os.path.join(HALF_DIR, "preprocessed"), modality="MRA",
+                                           output_name="localizers_mra05.csv")
+        check_dir, zoom_radius = os.path.join(DATA_DIR, "localizer_checks_05"), 48
+    else:
+        localizers = build_localizer_table()
+        check_dir, zoom_radius = os.path.join(DATA_DIR, "localizer_checks"), 24
 
     outside = localizers[~localizers["inside"]]
     print(f"[ LOCALIZERS ] outside cube: {len(outside)}")
     print(outside.groupby("modality").size())
 
     plt.switch_backend("Agg")
-    check_dir = os.path.join(DATA_DIR, "localizer_checks")
     os.makedirs(check_dir, exist_ok=True)
 
     inside = localizers[localizers["inside"]]
@@ -97,5 +152,6 @@ if __name__ == "__main__":
     ])
     for n, row in enumerate(sample.to_dict("records")):
         frame_type = "multiframe" if row["multiframe"] else "single"
-        show_localizer(row, save_path=os.path.join(check_dir, f"{n:02d}_{row['modality']}_{frame_type}.png"))
+        show_localizer(row, save_path=os.path.join(check_dir, f"{n:02d}_{row['modality']}_{frame_type}.png"),
+                       zoom_radius=zoom_radius)
     print(f"[ LOCALIZERS ] saved {len(sample)} check images to {check_dir}")
