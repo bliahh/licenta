@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from monai.networks.nets import resnet18
-
+import torchvision.models as models
 
 def batchnorm_to_groupnorm(module, num_groups=8):
     for name, child in module.named_children():
@@ -74,3 +74,20 @@ class ResNet18MultiTask(nn.Module):
         if self.n_outputs == 1:
             logit = logit.squeeze(1)
         return logit, heat
+
+class ResNet18_2D(nn.Module):
+    def __init__(self, num_classes=1, in_channels=1, stride=2, kernel_size=7, in_features=512, dropout=0.3, use_groupnorm=False, groups=32):
+        super().__init__()
+        norm = (lambda channels: nn.GroupNorm(groups, channels)) if use_groupnorm else None
+        encoder = models.resnet18(weights=None, norm_layer=norm)
+        encoder.conv1 = nn.Conv2d(in_channels, 64, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2, bias=False)
+        encoder.fc = nn.Identity()
+        self.encoder = encoder
+        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_features, num_classes))
+
+    def forward(self, x, return_embedding=False):
+        embedding = self.encoder(x)
+        logit = self.head(embedding)
+        if return_embedding:
+            return logit, embedding
+        return logit
