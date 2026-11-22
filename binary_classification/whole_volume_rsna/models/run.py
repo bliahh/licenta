@@ -42,9 +42,9 @@ def run(model, loader, criterion, scaler, optimizer, device, use_amp, desc="trai
 
 
 @torch.no_grad()
-def predict(model, loader, device, use_amp, desc="predict", return_peaks=False):
+def predict(model, loader, device, use_amp, desc="predict", return_peaks=False, return_ids=False):
     model.eval()
-    all_logits, all_labels, all_peaks = [], [], []
+    all_logits, all_labels, all_peaks, all_uids, all_slices = [], [], [], [], []
     for batch in tqdm(loader, desc=desc, leave=False):
         volume = batch[0].to(device)
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
@@ -60,9 +60,14 @@ def predict(model, loader, device, use_amp, desc="predict", return_peaks=False):
         label = batch[1].numpy()
         all_logits.append(logit.reshape(len(volume), -1))
         all_labels.append(label.reshape(len(volume), -1))
+        if return_ids:
+            all_uids.extend(batch[2])
+            all_slices.extend(batch[3].numpy())
     logits, labels = np.concatenate(all_logits), np.concatenate(all_labels)
     if logits.shape[1] == 1:
         logits, labels = logits[:, 0], labels[:, 0]
+    if return_ids:
+        return logits, labels, np.array(all_uids), np.array(all_slices)
     if return_peaks:
         peaks = np.concatenate(all_peaks) if all_peaks else None
         return logits, labels, peaks

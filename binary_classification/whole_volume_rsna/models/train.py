@@ -9,8 +9,9 @@ import torch
 from sklearn.metrics import roc_auc_score
 from torch import nn
 
-from binary_classification.whole_volume_rsna.data.loaders import build_loader, load_split, load_points, VOLUME_SIZE, GRID_SIZE, points_to_roi
-from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask
+from binary_classification.whole_volume_rsna.data.loaders import build_loader, load_split, load_points, VOLUME_SIZE, \
+    GRID_SIZE, points_to_roi, build_2d_loader
+from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D
 from binary_classification.whole_volume_rsna.models.run import run, predict
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -48,19 +49,48 @@ def localization_hit_rate(table, peaks, points, tolerance=1, roi_size=None):
         hits.append(cell_distance.min() <= tolerance)
     return float(np.mean(hits)) if hits else float("nan")
 
-def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr=1e-4, batch_size=1, patience=7, min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0, augm_proba=0.5, roi_size = None, roi_jitter = 0, n_outputs=1, vessel_dilation=None):
+
+def load_2d_tables(train_table, val_table, slices_csv, thickness_csv):
+    slices = pd.read_csv(slices_csv)
+    train_slices = slices[slices["uid"].isin(train_table["uid"])]
+    val_slices = slices[slices["uid"].isin(val_table["uid"])]
+    series_info = pd.concat([train_table, val_table])[["uid", "label"]].rename(columns={"label": "series_label"})
+    thickness = pd.read_csv(thickness_csv)[["uid", "slice_thickness"]]
+    series_info = series_info.merge(thickness, on="uid", how="left")
+    return train_slices, val_slices, series_info
+
+
+def slice_auc(labels, logits):
+    return roc_auc_score(labels >= 0.5, logits)
+
+
+def series_auc(uids, logits, table):
+    per_series = pd.DataFrame({"uid": uids, "logit": logits}).groupby("uid")["logit"].max()
+    series_labels = table.set_index("uid").loc[per_series.index, "label"].to_numpy()
+    return roc_auc_score(series_labels, per_series.to_numpy())
+
+
+def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr=1e-4, batch_size=1, patience=7, min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0, augm_proba=0.5, roi_size = None, roi_jitter = 0, n_outputs=1, vessel_dilation=None,
+          use_2d=False, use_context=False, neg_ratio=3, slices_csv=None, folder_2d=None, thickness_csv=None, accum_steps=2):
     set_seed(seed)
 
     train_table, val_table, _ = load_split(seed, only_mr=only_mr, only_ct=only_ct)
 
-
-    train_loader = build_loader(train_table, is_training=True, batch_size=batch_size, num_workers=num_workers, use_amp=USE_AMP, multitask=multitask, sigma=sigma, augm_proba=augm_proba, roi_size=roi_size, roi_jitter=roi_jitter, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
-    val_loader = build_loader(val_table, is_training=False, batch_size=batch_size, num_workers=num_workers,  use_amp=USE_AMP, multitask=multitask, sigma=sigma, roi_size=roi_size, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
+    if use_2d:
+        multitask = False
+        train_slices, val_slices, series_info = load_2d_tables(train_table, val_table, slices_csv, thickness_csv)
+        train_loader = build_2d_loader(train_slices, series_info, folder_2d, is_training=True, batch_size=batch_size, num_workers=num_workers, use_context=use_context, neg_ratio=neg_ratio)
+        val_loader = build_2d_loader(val_slices, None, folder_2d, is_training=False, batch_size=batch_size, num_workers=num_workers, use_context=use_context)
+    else:
+        train_loader = build_loader(train_table, is_training=True, batch_size=batch_size, num_workers=num_workers, use_amp=USE_AMP, multitask=multitask, sigma=sigma, augm_proba=augm_proba, roi_size=roi_size, roi_jitter=roi_jitter, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
+        val_loader = build_loader(val_table, is_training=False, batch_size=batch_size, num_workers=num_workers,  use_amp=USE_AMP, multitask=multitask, sigma=sigma, roi_size=roi_size, n_outputs=n_outputs, vessel_dilation=vessel_dilation)
 
 
     points = load_points()
 
-    if multitask:
+    if use_2d:
+        model = ResNet18_2D(in_channels=3 if use_context else 1, dropout=dropout).to(DEVICE)
+    elif multitask:
         model = ResNet18MultiTask(dropout=dropout, top_n=top_n, conv1_stride=1 if roi_size else 2, n_outputs=n_outputs).to(DEVICE)
     else:
         model = ResNet18(dropout=dropout).to(DEVICE)
@@ -80,8 +110,17 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
               "roi_size": roi_size,
               "roi_jitter": roi_jitter,
               "n_outputs": n_outputs,
-              "vessel_dilation": vessel_dilation
+              "vessel_dilation": vessel_dilation,
+              "use_2d": use_2d,
+              "use_context": use_context,
+              "neg_ratio": neg_ratio,
+              "slices_csv": slices_csv,
+              "folder_2d": folder_2d,
+              "thickness_csv": thickness_csv,
+              "accum_steps": accum_steps
               }
+    if use_2d:
+        config["n_train_slices"], config["n_val_slices"] = len(train_slices), len(val_slices)
 
     with open(os.path.join(run_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
@@ -95,26 +134,35 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
     for epoch in range(epochs):
         start = time.time()
 
-        train_loss, train_loss_cls, train_loss_heat = run(model, train_loader, criterion, scaler, optimizer, DEVICE, USE_AMP, desc=f"Epoch {epoch + 1}/{epochs}", heatmap_loss=heatmap_loss if multitask else None, lambd=lambd, pos_weight=pos_weight)
+        train_loss, train_loss_cls, train_loss_heat = run(model, train_loader, criterion, scaler, optimizer, DEVICE, USE_AMP, desc=f"Epoch {epoch + 1}/{epochs}", accum_steps=accum_steps, heatmap_loss=heatmap_loss if multitask else None, lambd=lambd, pos_weight=pos_weight)
 
-        val_logits, val_labels, val_peaks = predict(model, val_loader, device=DEVICE, use_amp=USE_AMP, return_peaks=True)
-        val_logits, val_labels = np.asarray(val_logits, np.float32), np.asarray(val_labels, np.float32)
-        val_loss = criterion(torch.tensor(val_logits), torch.tensor(val_labels)).item()
-        if val_logits.ndim == 2:
-            val_group_auc = float(np.nanmean([roc_auc_score(val_labels[:, g], val_logits[:, g])  for g in range(1, val_logits.shape[1]) if 0 < val_labels[:, g].sum() < len(val_labels)]))
-            val_logits, val_labels = val_logits[:, 0], val_labels[:, 0]
+        if use_2d:
+            val_logits, val_labels, val_uids, _ = predict(model, val_loader, device=DEVICE, use_amp=USE_AMP, return_ids=True)
+            val_logits, val_labels = np.asarray(val_logits, np.float32), np.asarray(val_labels, np.float32)
+            val_loss = criterion(torch.tensor(val_logits), torch.tensor(val_labels)).item()
+            val_auc = slice_auc(val_labels, val_logits)                      # dupa asta se alege best.pt
+            val_series_auc = series_auc(val_uids, val_logits, val_table)     # doar afisat si salvat
+            val_group_auc = val_hit = val_hit_exact = float("nan")
         else:
-            val_group_auc = float("nan")
-        val_auc = roc_auc_score(val_labels, val_logits)
-        val_hit = localization_hit_rate(val_table, val_peaks, points, roi_size=roi_size) if multitask else float("nan")
-        val_hit_exact = localization_hit_rate(val_table, val_peaks, points, tolerance=0, roi_size=roi_size) if multitask else float("nan")
+            val_logits, val_labels, val_peaks = predict(model, val_loader, device=DEVICE, use_amp=USE_AMP, return_peaks=True)
+            val_logits, val_labels = np.asarray(val_logits, np.float32), np.asarray(val_labels, np.float32)
+            val_loss = criterion(torch.tensor(val_logits), torch.tensor(val_labels)).item()
+            if val_logits.ndim == 2:
+                val_group_auc = float(np.nanmean([roc_auc_score(val_labels[:, g], val_logits[:, g])  for g in range(1, val_logits.shape[1]) if 0 < val_labels[:, g].sum() < len(val_labels)]))
+                val_logits, val_labels = val_logits[:, 0], val_labels[:, 0]
+            else:
+                val_group_auc = float("nan")
+            val_auc = roc_auc_score(val_labels, val_logits)
+            val_series_auc = val_auc
+            val_hit = localization_hit_rate(val_table, val_peaks, points, roi_size=roi_size) if multitask else float("nan")
+            val_hit_exact = localization_hit_rate(val_table, val_peaks, points, tolerance=0, roi_size=roi_size) if multitask else float("nan")
 
         lr_saved = scheduler.get_last_lr()[0]
         scheduler.step()
 
-        history.append({"epoch": epoch, "train_loss": train_loss, "train_loss_cls": train_loss_cls, "train_loss_heat": train_loss_heat, "val_loss": val_loss, "val_auc": val_auc, "val_hit": val_hit, "lr": lr_saved, "seconds": round(time.time() - start, 1), "val_hit_exact": val_hit_exact, "val_group_auc": val_group_auc})
+        history.append({"epoch": epoch, "train_loss": train_loss, "train_loss_cls": train_loss_cls, "train_loss_heat": train_loss_heat, "val_loss": val_loss, "val_auc": val_auc, "val_hit": val_hit, "lr": lr_saved, "seconds": round(time.time() - start, 1), "val_hit_exact": val_hit_exact, "val_group_auc": val_group_auc, "val_series_auc": val_series_auc})
         pd.DataFrame(history).to_csv(os.path.join(run_dir, "history.csv"), index=False)
-        print(f"[ TRAIN ] epoch {epoch + 1} | train_loss_binary_classif {train_loss_cls:.4f} | train_loss_loc {train_loss_heat:.4f} | val loss {val_loss:.4f} | val AUC {val_auc:.4f} | val hit {val_hit:.3f} | val hit exact {val_hit_exact:.3f} | val group AUC {val_group_auc:.3f} | scale {scaler.get_scale():.0f} | {history[-1]['seconds']} s")
+        print(f"[ TRAIN ] epoch {epoch + 1} | train_loss_binary_classif {train_loss_cls:.4f} | train_loss_loc {train_loss_heat:.4f} | val loss {val_loss:.4f} | val AUC {val_auc:.4f} | val series AUC {val_series_auc:.4f} | val hit {val_hit:.3f} | val hit exact {val_hit_exact:.3f} | val group AUC {val_group_auc:.3f} | scale {scaler.get_scale():.0f} | {history[-1]['seconds']} s")
 
         torch.save(model.state_dict(), os.path.join(run_dir, "last.pt"))
 
