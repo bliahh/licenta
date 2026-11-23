@@ -3,9 +3,9 @@ import os, ast, glob
 import numpy as np
 import pandas as pd
 import torch
-from SimpleITK import Compose
-from monai.transforms import RandFlip, RandRotate, RandZoom, RandScaleIntensity, RandShiftIntensity
+from monai.transforms import Compose, RandFlip, RandRotate, RandZoom, RandScaleIntensity, RandShiftIntensity
 from scipy.ndimage import binary_dilation
+from PIL import Image
 from torch.utils.data import Dataset, WeightedRandomSampler
 from monai.data import DataLoader
 from sklearn.model_selection import train_test_split
@@ -177,6 +177,16 @@ def make_labels(slices, z_coords, aneurysm_slices, cutoff=0.05):
 
 
 
+CTA_RANGE = (-1.0, 1.0)    
+MRA_RANGE = (-2.0, 8.0)
+
+
+def read_slice(folder, uid, k, modality):
+    value = np.asarray(Image.open(f"{folder}/{uid}/{k}.png"), dtype=np.float32)
+    low, high = CTA_RANGE if modality == "CTA" else MRA_RANGE
+    return value / 255 * (high - low) + low
+
+
 class Dataset2D(Dataset):
     def __init__(self, table, folder, transform=None, use_context=True):
         super().__init__()
@@ -184,25 +194,23 @@ class Dataset2D(Dataset):
         self.slice_idx = table["slice"].tolist()
         self.labels = table["label"].astype("float32").tolist()
         self.modalities = table["modality"].tolist()
+        self.n_slices = (table.groupby("uid")["slice"].max() + 1).to_dict()
         self.folder = folder
         self.transform = transform
-        self.use_2d = use_context
+        self.use_context = use_context
 
     def __len__(self):
         return len(self.uids)
 
     def __getitem__(self, i):
-        volume = np.load(f"{self.folder}/{self.uids[i]}.npy", mmap_mode="r")
-        k, n = self.slice_idx[i], len(volume)
-        if not self.use_2d:
-            neighbors = [max(k - 1, 0), k, min(k + 1, n - 1)]
-            image = torch.from_numpy(np.array(volume[neighbors], dtype=np.float32))
-        else:
-            image = torch.from_numpy(np.array(volume[k,k+1], dtype=np.float32))
+        uid, k, modality = self.uids[i], self.slice_idx[i], self.modalities[i]
+        n = self.n_slices[uid]
+        neighbors = [max(k - 1, 0), k, min(k + 1, n - 1)] if self.use_context else [k]
+        image = torch.from_numpy(np.stack([read_slice(self.folder, uid, j, modality) for j in neighbors]))
 
         if self.transform:
             image = self.transform(image)
-        return image, torch.tensor(self.labels[i]), self.uids[i], k
+        return image, torch.tensor([self.labels[i]]), self.uids[i], k
 
 
 
@@ -301,10 +309,11 @@ def build_loader(index, is_training, batch_size, num_workers, use_amp, augment=T
 
 
 def filter_training(index, series_info, max_thickness=2.0):
-    thick = set(series_info.loc[series_info["slice_thickness"] > max_thickness, "uid"])
+    info = series_info[series_info["uid"].isin(set(index["uid"]))]      # doar seriile din tabelul de felii
+    thick = set(info.loc[info["slice_thickness"] > max_thickness, "uid"])
 
     max_label = index.groupby("uid")["label"].max()
-    positive = series_info.loc[series_info["series_label"] == 1, "uid"]
+    positive = info.loc[info["series_label"] == 1, "uid"]
     missing = {uid for uid in positive if max_label.get(uid, 0) == 0}
 
     print(f"excluded from train: {len(thick)} serii cu felii groase, {len(missing)} positives series w. no labels")

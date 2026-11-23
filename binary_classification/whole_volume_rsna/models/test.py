@@ -34,7 +34,6 @@ def binary_metrics(val_labels, val_logits, test_labels, test_logits):
 
 
 def per_series(slices):
-    # doar informativ: scorul seriei = maximul pe felii
     return slices.groupby(["uid", "modality"], as_index=False)["logit"].max()
 
 
