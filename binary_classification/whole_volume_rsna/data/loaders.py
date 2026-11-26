@@ -9,7 +9,7 @@ from PIL import Image
 from torch.utils.data import Dataset, WeightedRandomSampler
 from monai.data import DataLoader
 from sklearn.model_selection import train_test_split
-
+import torch.nn.functional as F
 from binary_classification.whole_volume_rsna.data.transforms import eval_transforms, train_transforms
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -20,7 +20,8 @@ CROP = (128, 128, 128)
 ROI_CENTER = {"CTA": (95, 69, 84), "MRA": (95, 75, 97)}
 ROI_SIZE = 96
 MASK_DIR = os.path.join(DATA_DIR, "nnunet_masks")
-
+SIGMA_PX = 8.0
+HEAT_STRIDE = 32
 
 def load_vessel_mask(uid):
     return np.load(os.path.join(MASK_DIR, f"{uid}.npz"))["mask"]
@@ -187,8 +188,30 @@ def read_slice(folder, uid, k, modality):
     return value / 255 * (high - low) + low
 
 
+
+
+
+def load_points_2d(csv_path):
+    table = pd.read_csv(csv_path)
+    return {uid: list(zip(g["slice"], g["x512"], g["y512"])) for uid, g in table.groupby("uid")}
+def spatial_2d():
+    return Compose([
+        RandFlip(prob=0.5, spatial_axis=1),
+        RandRotate(range_x=0.17, prob=0.5, padding_mode="border"),
+        RandZoom(min_zoom=0.9, max_zoom=1.1, prob=0.5, keep_size=True),
+    ])
+
+
+def intensity_2d():
+    return Compose([
+        RandScaleIntensity(factors=0.1, prob=0.5),
+        RandShiftIntensity(offsets=0.1, prob=0.5),
+    ])
+
+
 class Dataset2D(Dataset):
-    def __init__(self, table, folder, transform=None, use_context=True):
+    def __init__(self, table, folder, spatial=None, intensity=None, use_context=True,
+                 multitask=False, points=None, series_labels=None):
         super().__init__()
         self.uids = table["uid"].tolist()
         self.slice_idx = table["slice"].tolist()
@@ -196,22 +219,42 @@ class Dataset2D(Dataset):
         self.modalities = table["modality"].tolist()
         self.n_slices = (table.groupby("uid")["slice"].max() + 1).to_dict()
         self.folder = folder
-        self.transform = transform
+        self.spatial = spatial
+        self.intensity = intensity
         self.use_context = use_context
+        self.multitask = multitask
+        self.points = points or {}
+        self.series_labels = series_labels or {}
+        self.yy, self.xx = torch.meshgrid(torch.arange(512.0), torch.arange(512.0), indexing="ij")
 
     def __len__(self):
         return len(self.uids)
 
+    def make_heat(self, uid, k, soft_label):
+        heat = torch.zeros(1, 512, 512)
+        if soft_label > 0 and uid in self.points:
+            s, x, y = min(self.points[uid], key=lambda p: abs(p[0] - k))
+            heat[0] = soft_label * torch.exp(-((self.xx - x) ** 2 + (self.yy - y) ** 2) / (2 * SIGMA_PX ** 2))
+        return heat
+
     def __getitem__(self, i):
-        uid, k, modality = self.uids[i], self.slice_idx[i], self.modalities[i]
+        uid, k, modality, soft_label = self.uids[i], self.slice_idx[i], self.modalities[i], self.labels[i]
         n = self.n_slices[uid]
         neighbors = [max(k - 1, 0), k, min(k + 1, n - 1)] if self.use_context else [k]
         image = torch.from_numpy(np.stack([read_slice(self.folder, uid, j, modality) for j in neighbors]))
 
-        if self.transform:
-            image = self.transform(image)
-        return image, torch.tensor([self.labels[i]]), self.uids[i], k
+        heat = self.make_heat(uid, k, soft_label) if self.multitask else torch.zeros(1, 512, 512)
+        if self.spatial:
+            both = torch.as_tensor(self.spatial(torch.cat([image, heat])))
+            image, heat = both[:-1], both[-1:]
+        if self.intensity:
+            image = torch.as_tensor(self.intensity(image))
+        heat = F.max_pool2d(heat, HEAT_STRIDE)
 
+        has_target = 0.0 if (self.series_labels.get(uid) == 1 and uid not in self.points) else 1.0
+        if not self.multitask:
+            has_target = 0.0
+        return image, torch.tensor([soft_label]), heat, torch.tensor(has_target), uid, k
 
 
 
@@ -331,13 +374,14 @@ def transform_2d(is_training):
         RandShiftIntensity(offsets=0.1, prob=0.5),
     ])
 
-def build_2d_loader(index, series_info, folder, is_training, batch_size, num_workers, use_context=True, neg_ratio=3):
+def build_2d_loader(index, series_info, folder, is_training, batch_size, num_workers, use_context=True, neg_ratio=3,multitask = False,points = None):
     transform = None
     if is_training:
         index = filter_training(index, series_info=series_info, max_thickness=2.0)
         transform = transform_2d(is_training)
 
-    dataset = Dataset2D(index, folder, transform=transform, use_context= use_context)
+    series_labels = dict(zip(series_info["uid"], series_info["series_label"])) if series_info is not None else {}
+    dataset = Dataset2D(index, folder, spatial=spatial_2d() if is_training else None, intensity=intensity_2d() if is_training else None, use_context=use_context, multitask=multitask, points=points, series_labels=series_labels)
     if is_training:
         positive = (index["label"] > 0).to_numpy()
         n_pos, n_neg = positive.sum(), (~positive).sum()
