@@ -38,7 +38,7 @@ def per_series(slices):
 
 
 def test_2d(run_dir, config, seed, device, use_amp, only_mr=False, only_ct=False, batch_size=32, num_workers=4):
-    model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"]).to(device)
+    model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"], multitask=config.get("multitask", False)).to(device)
     model.load_state_dict(torch.load(os.path.join(run_dir, "best.pt"), map_location=device))
 
     train_table, val_table, test_table = load_split(seed, only_mr=only_mr, only_ct=only_ct)
@@ -47,9 +47,8 @@ def test_2d(run_dir, config, seed, device, use_amp, only_mr=False, only_ct=False
 
     tables = {}
     for name, slices in [("val", val_slices), ("test", test_slices)]:
-        loader = build_2d_loader(slices, None, config["folder_2d"], is_training=False, batch_size=batch_size,
-                                 num_workers=num_workers, use_context=config["use_context"])
-        logits, labels, uids, slice_idx = predict(model, loader, device, use_amp, return_ids=True)
+        loader = build_2d_loader(slices, None, config["folder_2d"], is_training=False, batch_size=batch_size, num_workers=num_workers, use_context=config["use_context"])
+        logits, labels, uids, slice_idx, _ = predict(model, loader, device, use_amp, return_ids=True)
         modality = dict(zip(slices["uid"], slices["modality"]))
         tables[name] = pd.DataFrame({"uid": uids, "slice": slice_idx, "modality": [modality[u] for u in uids],
                                      "soft_label": labels, "label": (labels >= 0.5).astype(int), "logit": logits})

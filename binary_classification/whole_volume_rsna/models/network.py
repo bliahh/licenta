@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from monai.networks.nets import resnet18
 import torchvision.models as models
-
+import torch.nn.functional as F
 def batchnorm_to_groupnorm(module, num_groups=8):
     for name, child in module.named_children():
         if isinstance(child, nn.BatchNorm3d):
@@ -76,18 +76,35 @@ class ResNet18MultiTask(nn.Module):
         return logit, heat
 
 class ResNet18_2D(nn.Module):
-    def __init__(self, num_classes=1, in_channels=1, stride=2, kernel_size=7, in_features=512, dropout=0.3, use_groupnorm=False, groups=32):
+    def __init__(self, num_classes=1, in_channels=1, stride=2, kernel_size=7, in_features=512, dropout=0.3,
+                 use_groupnorm=False, groups=32, multitask=False, top_n=4):
         super().__init__()
         norm = (lambda channels: nn.GroupNorm(groups, channels)) if use_groupnorm else None
         encoder = models.resnet18(weights=None, norm_layer=norm)
         encoder.conv1 = nn.Conv2d(in_channels, 64, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2, bias=False)
         encoder.fc = nn.Identity()
         self.encoder = encoder
-        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_features, num_classes))
+        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_features, num_classes))   # folosit doar fara heatmap
+        self.multitask = multitask
+        if multitask:
+            self.dropout = nn.Dropout2d(dropout)
+            self.heat_head = nn.Conv2d(in_features, num_classes, kernel_size=1)
+            self.top_n = top_n
+
+    def features(self, x):
+        e = self.encoder
+        x = e.maxpool(e.relu(e.bn1(e.conv1(x))))
+        return e.layer4(e.layer3(e.layer2(e.layer1(x))))
 
     def forward(self, x, return_embedding=False):
-        embedding = self.encoder(x)
-        logit = self.head(embedding)
+        fmap = self.features(x)
+        embedding = torch.flatten(self.encoder.avgpool(fmap), 1)
+        if self.multitask:
+            heat = self.heat_head(self.dropout(fmap))
+            logit = heat.flatten(2).topk(self.top_n, dim=2).values.mean(dim=2)
+            out = (logit, heat)
+        else:
+            out = self.head(embedding)
         if return_embedding:
-            return logit, embedding
-        return logit
+            return (*out, embedding) if self.multitask else (out, embedding)
+        return out
