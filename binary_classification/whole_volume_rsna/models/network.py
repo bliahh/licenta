@@ -77,15 +77,16 @@ class ResNet18MultiTask(nn.Module):
 
 class ResNet18_2D(nn.Module):
     def __init__(self, num_classes=1, in_channels=1, stride=2, kernel_size=7, in_features=512, dropout=0.3,
-                 use_groupnorm=False, groups=32, multitask=False, top_n=4):
+                 use_groupnorm=False, groups=32, multitask=False, top_n=4, separe_head=False):
         super().__init__()
         norm = (lambda channels: nn.GroupNorm(groups, channels)) if use_groupnorm else None
         encoder = models.resnet18(weights=None, norm_layer=norm)
         encoder.conv1 = nn.Conv2d(in_channels, 64, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2, bias=False)
         encoder.fc = nn.Identity()
         self.encoder = encoder
-        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_features, num_classes))   # folosit doar fara heatmap
+        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_features, num_classes))
         self.multitask = multitask
+        self.separe_head = separe_head
         if multitask:
             self.dropout = nn.Dropout2d(dropout)
             self.heat_head = nn.Conv2d(in_features, num_classes, kernel_size=1)
@@ -101,7 +102,10 @@ class ResNet18_2D(nn.Module):
         embedding = torch.flatten(self.encoder.avgpool(fmap), 1)
         if self.multitask:
             heat = self.heat_head(self.dropout(fmap))
-            logit = heat.flatten(2).topk(self.top_n, dim=2).values.mean(dim=2)
+            if self.separe_head:
+                logit = self.head(embedding)
+            else:
+                logit = heat.flatten(2).topk(self.top_n, dim=2).values.mean(dim=2)
             out = (logit, heat)
         else:
             out = self.head(embedding)

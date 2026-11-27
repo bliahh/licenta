@@ -89,7 +89,7 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
           min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0,
           augm_proba=0.5, roi_size=None, roi_jitter=0, n_outputs=1, vessel_dilation=None, use_2d=False,
           use_context=False, neg_ratio=3, slices_csv=None, folder_2d=None, thickness_csv=None, accum_steps=2,
-          coords_csv=None):
+          coords_csv=None, separe_head=False):
     set_seed(seed)
 
     train_table, val_table, _ = load_split(seed, only_mr=only_mr, only_ct=only_ct)
@@ -120,7 +120,8 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
     points = load_points() if not use_2d else None
 
     if use_2d:
-        model = ResNet18_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask, top_n=top_n).to(DEVICE)
+        model = ResNet18_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask, top_n=top_n,
+                            separe_head=separe_head).to(DEVICE)
     elif multitask:
         model = ResNet18MultiTask(dropout=dropout, top_n=top_n, conv1_stride=1 if roi_size else 2, n_outputs=n_outputs).to(DEVICE)
     else:
@@ -149,7 +150,8 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
               "folder_2d": folder_2d,
               "thickness_csv": thickness_csv,
               "accum_steps": accum_steps,
-              "coords_csv": coords_csv
+              "coords_csv": coords_csv,
+              "separe_head": separe_head
               }
     if use_2d:
         config["n_train_slices"], config["n_val_slices"] = len(train_slices), len(val_slices)
