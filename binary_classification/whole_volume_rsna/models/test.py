@@ -7,7 +7,8 @@ import torch
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, f1_score
 
 from binary_classification.whole_volume_rsna.data.loaders import load_split, build_loader, load_points, location_scheme, build_2d_loader
-from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D
+from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D, \
+    ConvNext_2D, Swin_2D
 from binary_classification.whole_volume_rsna.models.run import predict
 from binary_classification.whole_volume_rsna.models.train import localization_hit_rate, load_2d_tables
 
@@ -38,9 +39,18 @@ def per_series(slices):
 
 
 def test_2d(run_dir, config, seed, device, use_amp, only_mr=False, only_ct=False, batch_size=32, num_workers=4):
-    model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
+    if config.get("backbone", "resnet18") == "convnext":
+        model = ConvNext_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
+                            multitask=config.get("multitask", False), top_n=config.get("top_n", 4),
+                            separe_head=config.get("separe_head", False)).to(device)
+    elif config.get("backbone", "resnet18") == "swin_t":
+        model = Swin_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
                         multitask=config.get("multitask", False), top_n=config.get("top_n", 4),
-                        separe_head=config.get("separe_head", False), fpn= config.get("fpn",False)).to(device)
+                        separe_head=config.get("separe_head", False)).to(device)
+    else:
+        model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
+                            multitask=config.get("multitask", False), top_n=config.get("top_n", 4),
+                            separe_head=config.get("separe_head", False), fpn=config.get("fpn", False)).to(device)
     model.load_state_dict(torch.load(os.path.join(run_dir, "best.pt"), map_location=device))
 
     train_table, val_table, test_table = load_split(seed, only_mr=only_mr, only_ct=only_ct)
