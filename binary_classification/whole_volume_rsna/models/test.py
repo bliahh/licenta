@@ -38,7 +38,9 @@ def per_series(slices):
 
 
 def test_2d(run_dir, config, seed, device, use_amp, only_mr=False, only_ct=False, batch_size=32, num_workers=4):
-    model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"], multitask=config.get("multitask", False)).to(device)
+    model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
+                        multitask=config.get("multitask", False), top_n=config.get("top_n", 4),
+                        separe_head=config.get("separe_head", False), fpn= config.get("fpn",False)).to(device)
     model.load_state_dict(torch.load(os.path.join(run_dir, "best.pt"), map_location=device))
 
     train_table, val_table, test_table = load_split(seed, only_mr=only_mr, only_ct=only_ct)
