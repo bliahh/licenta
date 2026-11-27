@@ -10,7 +10,7 @@ from sklearn.metrics import roc_auc_score
 from torch import nn
 
 from binary_classification.whole_volume_rsna.data.loaders import build_loader, load_split, load_points, VOLUME_SIZE, GRID_SIZE, points_to_roi, build_2d_loader, load_points_2d
-from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D
+from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D, ConvNext_2D
 from binary_classification.whole_volume_rsna.models.run import run, predict
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -89,7 +89,7 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
           min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0,
           augm_proba=0.5, roi_size=None, roi_jitter=0, n_outputs=1, vessel_dilation=None, use_2d=False,
           use_context=False, neg_ratio=3, slices_csv=None, folder_2d=None, thickness_csv=None, accum_steps=2,
-          coords_csv=None, separe_head=False,fpn = False):
+          coords_csv=None, separe_head=False, fpn=False, backbone="resnet18", weight_decay=0.01, warmup_epochs=0):
     set_seed(seed)
     cell = 16 if fpn else 32
 
@@ -120,7 +120,10 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
 
     points = load_points() if not use_2d else None
 
-    if use_2d:
+    if use_2d and backbone == "convnext":
+        model = ConvNext_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask,
+                            top_n=top_n, separe_head=separe_head).to(DEVICE)
+    elif use_2d:
         model = ResNet18_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask, top_n=top_n,
                             separe_head=separe_head,fpn = fpn).to(DEVICE)
     elif multitask:
@@ -128,8 +131,14 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
     else:
         model = ResNet18(dropout=dropout).to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    if warmup_epochs > 0:
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [
+            torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.01, total_iters=warmup_epochs),
+            torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs)],
+            milestones=[warmup_epochs])
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     scaler = torch.amp.GradScaler("cuda", enabled=USE_AMP)
 
     os.makedirs(run_dir, exist_ok=True)
@@ -153,7 +162,10 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
               "accum_steps": accum_steps,
               "coords_csv": coords_csv,
               "separe_head": separe_head,
-              "fpn": fpn
+              "fpn": fpn,
+              "backbone": backbone,
+              "weight_decay": weight_decay,
+              "warmup_epochs": warmup_epochs
               }
     if use_2d:
         config["n_train_slices"], config["n_val_slices"] = len(train_slices), len(val_slices)

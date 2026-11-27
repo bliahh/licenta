@@ -123,3 +123,52 @@ class ResNet18_2D(nn.Module):
         if return_embedding:
             return (*out, embedding) if self.multitask else (out, embedding)
         return out
+
+
+
+class HeadsMixin:
+    def build_heads(self, features, num_classes, dropout, multitask, top_n, separe_head):
+        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(features, num_classes))
+        self.multitask = multitask
+        self.separe_head = separe_head
+        if multitask:
+            self.dropout = nn.Dropout2d(dropout)
+            self.heat_head = nn.Conv2d(features, num_classes, kernel_size=1)
+            self.top_n = top_n
+
+    def apply_heads(self, embedding, fmap, return_embedding):
+        if self.multitask:
+            heat = self.heat_head(self.dropout(fmap))
+            if self.separe_head:
+                logit = self.head(embedding)
+            else:
+                logit = heat.flatten(2).topk(self.top_n, dim=2).values.mean(dim=2)
+            out = (logit, heat)
+        else:
+            out = self.head(embedding)
+        if return_embedding:
+            return (*out, embedding) if self.multitask else (out, embedding)
+        return out
+
+
+
+class ConvNext_2D(nn.Module, HeadsMixin):
+    def __init__(self, num_classes=1, in_channels=1, dropout=0.3, multitask=False, top_n=4, separe_head=False):
+        super().__init__()
+
+        network = models.convnext_tiny(weight=None)
+
+        network.features[0][0] = nn.Conv2d(in_channels,96,kernel_size=4,stride=4)
+
+        self.features = network.features
+
+        self.norm = nn.LayerNorm(768)
+
+        self.build_heads(768, num_classes, dropout, multitask, top_n, separe_head)
+
+    def forward(self, x, return_embedding=False):
+
+        fmap = self.features(x)
+        embedding = self.norm(fmap.mean(dim=(2, 3)))
+
+        return self.apply_heads(embedding, fmap, return_embedding)
