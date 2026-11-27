@@ -126,11 +126,13 @@ class ResNet18_2D(nn.Module):
 
 
 
+
 class HeadsMixin:
     def build_heads(self, features, num_classes, dropout, multitask, top_n, separe_head):
-        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(features, num_classes))
         self.multitask = multitask
         self.separe_head = separe_head
+        if not multitask or separe_head:
+            self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(features, num_classes))
         if multitask:
             self.dropout = nn.Dropout2d(dropout)
             self.heat_head = nn.Conv2d(features, num_classes, kernel_size=1)
@@ -151,24 +153,26 @@ class HeadsMixin:
         return out
 
 
-
-class ConvNext_2D(nn.Module, HeadsMixin):
-    def __init__(self, num_classes=1, in_channels=1, dropout=0.3, multitask=False, top_n=4, separe_head=False):
+class ConvNext_2D(HeadsMixin, nn.Module):
+    def __init__(self, num_classes=1, in_channels=1, dropout=0.3, multitask=False, top_n=4, separe_head=False, pretrained=False):
         super().__init__()
+        weights = models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1 if pretrained else None
+        network = models.convnext_tiny(weights=weights)
 
-        network = models.convnext_tiny(weight=None)
-
-        network.features[0][0] = nn.Conv2d(in_channels,96,kernel_size=4,stride=4)
+        old = network.features[0][0]
+        new = nn.Conv2d(in_channels, 96, kernel_size=4, stride=4)
+        if pretrained:
+            with torch.no_grad():
+                w = old.weight.sum(dim=1, keepdim=True)
+                new.weight.copy_(w.repeat(1, in_channels, 1, 1) / in_channels)
+                new.bias.copy_(old.bias)
+        network.features[0][0] = new
 
         self.features = network.features
-
         self.norm = nn.LayerNorm(768)
-
         self.build_heads(768, num_classes, dropout, multitask, top_n, separe_head)
 
     def forward(self, x, return_embedding=False):
-
         fmap = self.features(x)
         embedding = self.norm(fmap.mean(dim=(2, 3)))
-
         return self.apply_heads(embedding, fmap, return_embedding)
