@@ -211,7 +211,7 @@ def intensity_2d():
 
 class Dataset2D(Dataset):
     def __init__(self, table, folder, spatial=None, intensity=None, use_context=True,
-                 multitask=False, points=None, series_labels=None):
+                 multitask=False, points=None, series_labels=None,heat_stride=HEAT_STRIDE):
         super().__init__()
         self.uids = table["uid"].tolist()
         self.slice_idx = table["slice"].tolist()
@@ -226,7 +226,7 @@ class Dataset2D(Dataset):
         self.points = points or {}
         self.series_labels = series_labels or {}
         self.yy, self.xx = torch.meshgrid(torch.arange(512.0), torch.arange(512.0), indexing="ij")
-
+        self.heat_stride = heat_stride
     def __len__(self):
         return len(self.uids)
 
@@ -249,7 +249,7 @@ class Dataset2D(Dataset):
             image, heat = both[:-1], both[-1:]
         if self.intensity:
             image = torch.as_tensor(self.intensity(image))
-        heat = F.max_pool2d(heat, HEAT_STRIDE)
+        heat = F.max_pool2d(heat, self.heat_stride)
 
         has_target = 0.0 if (self.series_labels.get(uid) == 1 and uid not in self.points) else 1.0
         if not self.multitask:
@@ -374,14 +374,14 @@ def transform_2d(is_training):
         RandShiftIntensity(offsets=0.1, prob=0.5),
     ])
 
-def build_2d_loader(index, series_info, folder, is_training, batch_size, num_workers, use_context=True, neg_ratio=3,multitask = False,points = None):
+def build_2d_loader(index, series_info, folder, is_training, batch_size, num_workers, use_context=True, neg_ratio=3,multitask = False,points = None, heat_stride = HEAT_STRIDE):
     transform = None
     if is_training:
         index = filter_training(index, series_info=series_info, max_thickness=2.0)
         transform = transform_2d(is_training)
 
     series_labels = dict(zip(series_info["uid"], series_info["series_label"])) if series_info is not None else {}
-    dataset = Dataset2D(index, folder, spatial=spatial_2d() if is_training else None, intensity=intensity_2d() if is_training else None, use_context=use_context, multitask=multitask, points=points, series_labels=series_labels)
+    dataset = Dataset2D(index, folder, spatial=spatial_2d() if is_training else None, intensity=intensity_2d() if is_training else None, use_context=use_context, multitask=multitask, points=points, series_labels=series_labels,heat_stride= heat_stride)
     if is_training:
         positive = (index["label"] > 0).to_numpy()
         n_pos, n_neg = positive.sum(), (~positive).sum()

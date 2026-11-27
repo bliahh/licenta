@@ -64,13 +64,13 @@ def load_2d_tables(train_table, val_table, slices_csv, thickness_csv):
 HEAT_CELL = 32
 
 
-def localization_hit_2d(uids, slices, labels, peaks, points_2d, tolerance_px=64):
+def localization_hit_2d(uids, slices, labels, peaks, points_2d, tolerance_px=64,cell = HEAT_CELL):
     hits = []
     for uid, k, label, (row, col) in zip(uids, slices, labels, peaks):
         if label < 0.5 or uid not in points_2d:
             continue
         s, x, y = min(points_2d[uid], key=lambda p: abs(p[0] - k))
-        px, py = (col + 0.5) * HEAT_CELL, (row + 0.5) * HEAT_CELL
+        px, py = (col + 0.5) * cell, (row + 0.5) * cell
         hits.append(np.hypot(px - x, py - y) <= tolerance_px)
     return float(np.mean(hits)) if hits else float("nan")
 
@@ -89,8 +89,9 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
           min_epochs=10, dropout=0.3, num_workers=4, multitask=True, lambd=0.0, sigma=1.0, top_n=4, pos_weight=50.0,
           augm_proba=0.5, roi_size=None, roi_jitter=0, n_outputs=1, vessel_dilation=None, use_2d=False,
           use_context=False, neg_ratio=3, slices_csv=None, folder_2d=None, thickness_csv=None, accum_steps=2,
-          coords_csv=None, separe_head=False):
+          coords_csv=None, separe_head=False,fpn = False):
     set_seed(seed)
+    cell = 16 if fpn else 32
 
     train_table, val_table, _ = load_split(seed, only_mr=only_mr, only_ct=only_ct)
 
@@ -104,10 +105,10 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
         train_slices, val_slices, series_info = load_2d_tables(train_table, val_table, slices_csv, thickness_csv)
         train_loader = build_2d_loader(train_slices, series_info, folder_2d, is_training=True, batch_size=batch_size,
                                        num_workers=num_workers, use_context=use_context, neg_ratio=neg_ratio,
-                                       multitask=multitask, points=points_2d)
+                                       multitask=multitask, points=points_2d,heat_stride=cell)
         val_loader = build_2d_loader(val_slices, None, folder_2d, is_training=False, batch_size=batch_size,
                                      num_workers=num_workers, use_context=use_context, multitask=multitask,
-                                     points=points_2d)
+                                     points=points_2d,heat_stride=cell)
     else:
         train_loader = build_loader(train_table, is_training=True, batch_size=batch_size, num_workers=num_workers,
                                     use_amp=USE_AMP, multitask=multitask, sigma=sigma, augm_proba=augm_proba,
@@ -121,7 +122,7 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
 
     if use_2d:
         model = ResNet18_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask, top_n=top_n,
-                            separe_head=separe_head).to(DEVICE)
+                            separe_head=separe_head,fpn = fpn).to(DEVICE)
     elif multitask:
         model = ResNet18MultiTask(dropout=dropout, top_n=top_n, conv1_stride=1 if roi_size else 2, n_outputs=n_outputs).to(DEVICE)
     else:
@@ -151,7 +152,8 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
               "thickness_csv": thickness_csv,
               "accum_steps": accum_steps,
               "coords_csv": coords_csv,
-              "separe_head": separe_head
+              "separe_head": separe_head,
+              "fpn": fpn
               }
     if use_2d:
         config["n_train_slices"], config["n_val_slices"] = len(train_slices), len(val_slices)
@@ -182,9 +184,9 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
             val_auc = slice_auc(val_labels, val_logits)
             val_series_auc = series_auc(val_uids, val_logits, val_table)
             val_hit = localization_hit_2d(val_uids, val_slices, val_labels, val_peaks,
-                                          points_2d) if multitask else float("nan")
+                                          points_2d,tolerance_px=64,cell=cell) if multitask else float("nan")
             val_hit_exact = localization_hit_2d(val_uids, val_slices, val_labels, val_peaks, points_2d,
-                                                tolerance_px=HEAT_CELL) if multitask else float("nan")
+                                                tolerance_px=32,cell = cell) if multitask else float("nan")
             val_group_auc = float("nan")
         else:
             val_logits, val_labels, val_peaks = predict(model, val_loader, device=DEVICE, use_amp=USE_AMP,
