@@ -10,7 +10,8 @@ from sklearn.metrics import roc_auc_score
 from torch import nn
 
 from binary_classification.whole_volume_rsna.data.loaders import build_loader, load_split, load_points, VOLUME_SIZE, GRID_SIZE, points_to_roi, build_2d_loader, load_points_2d
-from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D, ConvNext_2D
+from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D, \
+    ConvNext_2D, Swin_2D
 from binary_classification.whole_volume_rsna.models.run import run, predict
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -122,6 +123,9 @@ def train(seed, only_mr=False, only_ct=False, run_dir="runs/test", epochs=30, lr
 
     if use_2d and backbone == "convnext":
         model = ConvNext_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask,
+                            top_n=top_n, separe_head=separe_head).to(DEVICE)
+    elif use_2d and backbone == "swin_t":
+        model = Swin_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask,
                             top_n=top_n, separe_head=separe_head).to(DEVICE)
     elif use_2d:
         model = ResNet18_2D(in_channels=3 if use_context else 1, dropout=dropout, multitask=multitask, top_n=top_n,

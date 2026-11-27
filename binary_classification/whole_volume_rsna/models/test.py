@@ -7,7 +7,8 @@ import torch
 from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, f1_score
 
 from binary_classification.whole_volume_rsna.data.loaders import load_split, build_loader, load_points, location_scheme, build_2d_loader
-from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D, ConvNext_2D
+from binary_classification.whole_volume_rsna.models.network import ResNet18, ResNet18MultiTask, ResNet18_2D, \
+    ConvNext_2D, Swin_2D
 from binary_classification.whole_volume_rsna.models.run import predict
 from binary_classification.whole_volume_rsna.models.train import localization_hit_rate, load_2d_tables
 
@@ -42,6 +43,10 @@ def test_2d(run_dir, config, seed, device, use_amp, only_mr=False, only_ct=False
         model = ConvNext_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
                             multitask=config.get("multitask", False), top_n=config.get("top_n", 4),
                             separe_head=config.get("separe_head", False)).to(device)
+    elif config.get("backbone", "resnet18") == "swin_t":
+        model = Swin_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
+                        multitask=config.get("multitask", False), top_n=config.get("top_n", 4),
+                        separe_head=config.get("separe_head", False)).to(device)
     else:
         model = ResNet18_2D(in_channels=3 if config["use_context"] else 1, dropout=config["dropout"],
                             multitask=config.get("multitask", False), top_n=config.get("top_n", 4),

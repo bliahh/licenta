@@ -3,6 +3,9 @@ import torch.nn as nn
 from monai.networks.nets import resnet18
 import torchvision.models as models
 import torch.nn.functional as F
+from torchvision.transforms.v2.functional import permute_channels
+
+
 def batchnorm_to_groupnorm(module, num_groups=8):
     for name, child in module.named_children():
         if isinstance(child, nn.BatchNorm3d):
@@ -176,3 +179,20 @@ class ConvNext_2D(HeadsMixin, nn.Module):
         fmap = self.features(x)
         embedding = self.norm(fmap.mean(dim=(2, 3)))
         return self.apply_heads(embedding, fmap, return_embedding)
+
+
+
+class Swin_2D(HeadsMixin, nn.Module):
+    def __init__(self, num_classes=1, in_channels=1, dropout=0.3, multitask=False, top_n=4, separe_head=False):
+        super().__init__()
+        network = models.swin_t(weights=None)
+        network.features[0][0] = nn.Conv2d(in_channels, 96, kernel_size=4, stride=4)
+        self.features = network.features
+        self.norm = network.norm
+        self.build_heads(768, num_classes, dropout, multitask, top_n, separe_head)
+
+    def forward(self, x, return_embedding=False):
+        fmap = self.norm(self.features(x)).permute(0, 3, 1, 2)
+        embedding = fmap.mean(dim=(2, 3))
+        return self.apply_heads(embedding, fmap, return_embedding)
+
